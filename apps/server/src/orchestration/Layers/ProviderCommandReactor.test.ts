@@ -9,6 +9,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   EventId,
   MessageId,
+  type ProjectExecutionTarget,
   ProjectId,
   ThreadId,
   TurnId,
@@ -34,6 +35,11 @@ import { ProviderCommandReactorLive } from "./ProviderCommandReactor.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { RemoteExecutionManager, type RemoteExecutionManagerShape } from "../../remoteExecutionManager.ts";
+import {
+  buildRemoteCodexProviderOptions,
+  buildRemoteTerminalEnvironment,
+} from "../../remoteExecution.ts";
 
 const asProjectId = (value: string): ProjectId => ProjectId.makeUnsafe(value);
 const asApprovalRequestId = (value: string): ApprovalRequestId =>
@@ -83,7 +89,10 @@ describe("ProviderCommandReactor", () => {
     createdStateDirs.clear();
   });
 
-  async function createHarness(input?: { readonly stateDir?: string }) {
+  async function createHarness(input?: {
+    readonly stateDir?: string;
+    readonly executionTarget?: ProjectExecutionTarget;
+  }) {
     const now = new Date().toISOString();
     const stateDir = input?.stateDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "t3code-reactor-"));
     createdStateDirs.add(stateDir);
@@ -203,9 +212,37 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(OrchestrationCommandReceiptRepositoryLive),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const remoteExecutionService: RemoteExecutionManagerShape = {
+      prepareLaunch: ({ cwd, target }) =>
+        Effect.succeed({
+          cwd: target.kind === "ssh" ? cwd ?? target.sync.localPath : cwd,
+          terminalEnv:
+            target.kind === "ssh"
+              ? buildRemoteTerminalEnvironment({ stateDir, target })
+              : undefined,
+          providerOptions:
+            target.kind === "ssh"
+              ? buildRemoteCodexProviderOptions({ stateDir, target })
+              : undefined,
+          syncState: {
+            key: target.kind === "ssh" ? `t3-session:${target.host}` : "workspace-local",
+            status: target.kind === "ssh" ? "ready" : "local",
+            updatedAt: now,
+            detail: null,
+          },
+        }),
+      getSyncState: (target) =>
+        Effect.succeed({
+          key: target.kind === "ssh" ? `t3-session:${target.host}` : "workspace-local",
+          status: target.kind === "ssh" ? "ready" : "local",
+          updatedAt: now,
+          detail: null,
+        }),
+    };
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
+      Layer.provideMerge(Layer.succeed(RemoteExecutionManager, remoteExecutionService)),
       Layer.provideMerge(Layer.succeed(GitCore, { renameBranch } as unknown as GitCoreShape)),
       Layer.provideMerge(
         Layer.succeed(TextGeneration, { generateBranchName } as unknown as TextGenerationShape),
@@ -229,6 +266,7 @@ describe("ProviderCommandReactor", () => {
         title: "Provider Project",
         workspaceRoot: "/tmp/provider-project",
         defaultModel: "gpt-5-codex",
+        ...(input?.executionTarget !== undefined ? { executionTarget: input.executionTarget } : {}),
         createdAt: now,
       }),
     );
@@ -297,6 +335,73 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.makeUnsafe("thread-1"));
     expect(thread?.session?.threadId).toBe("thread-1");
     expect(thread?.session?.runtimeMode).toBe("approval-required");
+  });
+
+  it("pins thread execution target at creation and starts SSH-backed sessions with shell overrides", async () => {
+    const harness = await createHarness({
+      executionTarget: {
+        kind: "ssh",
+        label: "GPU box",
+        host: "gpu-1.internal",
+        username: "ubuntu",
+        port: 2222,
+        remotePath: "/srv/projects/provider-project",
+        sync: {
+          mode: "mutagen",
+          localPath: "/var/t3/mirrors/provider-project",
+          ignores: ["node_modules", ".next"],
+        },
+      },
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.makeUnsafe("cmd-project-retarget-local"),
+        projectId: asProjectId("project-1"),
+        executionTarget: { kind: "workspace-local" },
+      }),
+    );
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-remote"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-remote"),
+          role: "user",
+          text: "run on the pinned remote target",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      cwd: "/var/t3/mirrors/provider-project",
+      providerOptions: {
+        codex: {
+          shellEnvironment: {
+            T3_REMOTE_HOST: "gpu-1.internal",
+            T3_REMOTE_PORT: "2222",
+            T3_REMOTE_USER: "ubuntu",
+            T3_REMOTE_PATH: "/srv/projects/provider-project",
+            T3_LOCAL_PATH: "/var/t3/mirrors/provider-project",
+          },
+        },
+      },
+    });
+
+    const providerOptions = harness.startSession.mock.calls[0]?.[1] as {
+      providerOptions?: { codex?: { shellPath?: string } };
+    };
+    expect(providerOptions.providerOptions?.codex?.shellPath).toBeDefined();
+    expect(fs.existsSync(providerOptions.providerOptions?.codex?.shellPath ?? "")).toBe(true);
   });
 
   it("forwards codex model options through session start and turn send", async () => {

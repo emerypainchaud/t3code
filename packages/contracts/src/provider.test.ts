@@ -24,6 +24,12 @@ describe("ProviderSessionStartInput", () => {
         codex: {
           binaryPath: "/usr/local/bin/codex",
           homePath: "/tmp/.codex",
+          shellPath: "/tmp/t3-remote-shell.sh",
+          shellEnvironment: {
+            T3_REMOTE_HOST: "gpu-1.internal",
+            T3_REMOTE_PATH: "/srv/project",
+            T3_LOCAL_PATH: "/var/t3/mirror/project",
+          },
         },
       },
     });
@@ -32,6 +38,12 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
     expect(parsed.providerOptions?.codex?.binaryPath).toBe("/usr/local/bin/codex");
     expect(parsed.providerOptions?.codex?.homePath).toBe("/tmp/.codex");
+    expect(parsed.providerOptions?.codex?.shellPath).toBe("/tmp/t3-remote-shell.sh");
+    expect(parsed.providerOptions?.codex?.shellEnvironment).toEqual({
+      T3_REMOTE_HOST: "gpu-1.internal",
+      T3_REMOTE_PATH: "/srv/project",
+      T3_LOCAL_PATH: "/var/t3/mirror/project",
+    });
   });
 
   it("rejects payloads without runtime mode", () => {

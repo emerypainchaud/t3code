@@ -207,6 +207,9 @@ function createSnapshotForTargetUser(options: {
         title: "Project",
         workspaceRoot: "/repo/project",
         defaultModel: "gpt-5",
+        executionTarget: {
+          kind: "workspace-local",
+        },
         scripts: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -217,6 +220,9 @@ function createSnapshotForTargetUser(options: {
       {
         id: THREAD_ID,
         projectId: PROJECT_ID,
+        executionTarget: {
+          kind: "workspace-local",
+        },
         title: "Browser test thread",
         model: "gpt-5",
         interactionMode: "default",

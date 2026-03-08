@@ -238,6 +238,22 @@ describe("TerminalManager", () => {
     manager.dispose();
   });
 
+  it("prefers a per-session SHELL override from runtime env", async () => {
+    const { manager, ptyAdapter } = makeManager();
+
+    await manager.open(
+      openInput({
+        env: {
+          SHELL: "/tmp/t3-remote-shell.sh",
+          T3_REMOTE_HOST: "gpu-1.internal",
+        },
+      }),
+    );
+
+    expect(ptyAdapter.spawnInputs[0]?.shell).toBe("/tmp/t3-remote-shell.sh");
+    manager.dispose();
+  });
+
   it("forwards write and resize to active pty process", async () => {
     const { manager, ptyAdapter } = makeManager();
     await manager.open(openInput());

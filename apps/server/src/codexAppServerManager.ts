@@ -548,11 +548,14 @@ export class CodexAppServerManager extends EventEmitter<CodexAppServerManagerEve
         cwd: resolvedCwd,
         ...(codexHomePath ? { homePath: codexHomePath } : {}),
       });
+      const codexShellPath = codexOptions.shellPath;
       const child = spawn(codexBinaryPath, ["app-server"], {
         cwd: resolvedCwd,
         env: {
           ...process.env,
           ...(codexHomePath ? { CODEX_HOME: codexHomePath } : {}),
+          ...(codexShellPath ? { SHELL: codexShellPath } : {}),
+          ...codexOptions.shellEnvironment,
         },
         stdio: ["pipe", "pipe", "pipe"],
         shell: process.platform === "win32",
@@ -1510,6 +1513,8 @@ function normalizeProviderThreadId(value: string | undefined): string | undefine
 function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   readonly binaryPath?: string;
   readonly homePath?: string;
+  readonly shellPath?: string;
+  readonly shellEnvironment?: Record<string, string>;
 } {
   const options = input.providerOptions?.codex;
   if (!options) {
@@ -1518,6 +1523,8 @@ function readCodexProviderOptions(input: CodexAppServerStartSessionInput): {
   return {
     ...(options.binaryPath ? { binaryPath: options.binaryPath } : {}),
     ...(options.homePath ? { homePath: options.homePath } : {}),
+    ...(options.shellPath ? { shellPath: options.shellPath } : {}),
+    ...(options.shellEnvironment ? { shellEnvironment: options.shellEnvironment } : {}),
   };
 }
 

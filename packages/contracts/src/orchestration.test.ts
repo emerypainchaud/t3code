@@ -72,6 +72,18 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
       title: " Project Title ",
       workspaceRoot: " /tmp/workspace ",
       defaultModel: " gpt-5.2 ",
+      executionTarget: {
+        kind: "ssh",
+        label: " GPU box ",
+        host: " gpu-1.internal ",
+        username: " ubuntu ",
+        remotePath: " /srv/repos/project ",
+        sync: {
+          mode: "mutagen",
+          localPath: " /workspace-mirror/project ",
+          ignores: [" node_modules ", " .next "],
+        },
+      },
       createdAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.commandId, "cmd-1");
@@ -79,6 +91,18 @@ it.effect("trims branded ids and command string fields at decode boundaries", ()
     assert.strictEqual(parsed.title, "Project Title");
     assert.strictEqual(parsed.workspaceRoot, "/tmp/workspace");
     assert.strictEqual(parsed.defaultModel, "gpt-5.2");
+    assert.deepStrictEqual(parsed.executionTarget, {
+      kind: "ssh",
+      label: "GPU box",
+      host: "gpu-1.internal",
+      username: "ubuntu",
+      remotePath: "/srv/repos/project",
+      sync: {
+        mode: "mutagen",
+        localPath: "/workspace-mirror/project",
+        ignores: ["node_modules", ".next"],
+      },
+    });
   }),
 );
 
@@ -155,6 +179,7 @@ it.effect("decodes thread.created runtime mode for historical events", () =>
     });
 
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+    assert.deepStrictEqual(parsed.executionTarget, { kind: "workspace-local" });
   }),
 );
 

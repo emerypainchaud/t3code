@@ -15,6 +15,9 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     id: ThreadId.makeUnsafe("thread-1"),
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
+    executionTarget: {
+      kind: "workspace-local",
+    },
     title: "Thread",
     model: "gpt-5-codex",
     runtimeMode: DEFAULT_RUNTIME_MODE,
@@ -42,6 +45,9 @@ function makeState(thread: Thread): AppState {
         cwd: "/tmp/project",
         model: "gpt-5-codex",
         expanded: true,
+        executionTarget: {
+          kind: "workspace-local",
+        },
         scripts: [],
       },
     ],
@@ -54,6 +60,9 @@ function makeReadModelThread(overrides: Partial<OrchestrationReadModel["threads"
   return {
     id: ThreadId.makeUnsafe("thread-1"),
     projectId: ProjectId.makeUnsafe("project-1"),
+    executionTarget: {
+      kind: "workspace-local",
+    },
     title: "Thread",
     model: "gpt-5.3-codex",
     runtimeMode: DEFAULT_RUNTIME_MODE,
@@ -83,6 +92,9 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
         title: "Project",
         workspaceRoot: "/tmp/project",
         defaultModel: "gpt-5.3-codex",
+        executionTarget: {
+          kind: "workspace-local",
+        },
         createdAt: "2026-02-27T00:00:00.000Z",
         updatedAt: "2026-02-27T00:00:00.000Z",
         deletedAt: null,

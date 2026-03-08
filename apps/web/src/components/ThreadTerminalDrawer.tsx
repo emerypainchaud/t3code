@@ -1,6 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
-import { type ThreadId } from "@t3tools/contracts";
+import { type ProjectId, type ThreadId } from "@t3tools/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -109,6 +109,7 @@ function terminalThemeFromApp(): ITheme {
 
 interface TerminalViewportProps {
   threadId: ThreadId;
+  projectId: ProjectId;
   terminalId: string;
   cwd: string;
   runtimeEnv?: Record<string, string>;
@@ -121,6 +122,7 @@ interface TerminalViewportProps {
 
 function TerminalViewport({
   threadId,
+  projectId,
   terminalId,
   cwd,
   runtimeEnv,
@@ -278,6 +280,7 @@ function TerminalViewport({
         activeFitAddon.fit();
         const snapshot = await api.terminal.open({
           threadId,
+          projectId,
           terminalId,
           cwd,
           cols: activeTerminal.cols,
@@ -392,7 +395,7 @@ function TerminalViewport({
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, runtimeEnv, terminalId, threadId]);
+  }, [cwd, projectId, runtimeEnv, terminalId, threadId]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -435,6 +438,7 @@ function TerminalViewport({
 
 interface ThreadTerminalDrawerProps {
   threadId: ThreadId;
+  projectId: ProjectId;
   cwd: string;
   runtimeEnv?: Record<string, string>;
   height: number;
@@ -484,6 +488,7 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
 
 export default function ThreadTerminalDrawer({
   threadId,
+  projectId,
   cwd,
   runtimeEnv,
   height,
@@ -795,6 +800,7 @@ export default function ThreadTerminalDrawer({
                     <div className="h-full p-1">
                       <TerminalViewport
                         threadId={threadId}
+                        projectId={projectId}
                         terminalId={terminalId}
                         cwd={cwd}
                         {...(runtimeEnv ? { runtimeEnv } : {})}
@@ -813,6 +819,7 @@ export default function ThreadTerminalDrawer({
                 <TerminalViewport
                   key={resolvedActiveTerminalId}
                   threadId={threadId}
+                  projectId={projectId}
                   terminalId={resolvedActiveTerminalId}
                   cwd={cwd}
                   {...(runtimeEnv ? { runtimeEnv } : {})}

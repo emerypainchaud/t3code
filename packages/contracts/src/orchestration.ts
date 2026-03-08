@@ -1,5 +1,6 @@
 import { Option, Schema, SchemaIssue, Struct } from "effect";
 import { ProviderModelOptions } from "./model";
+import { ProjectExecutionTarget } from "./executionTarget";
 import {
   ApprovalRequestId,
   CheckpointRef,
@@ -129,11 +130,18 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+const DefaultProjectExecutionTarget = ProjectExecutionTarget.pipe(
+  Schema.withDecodingDefault(() => ({
+    kind: "workspace-local" as const,
+  })),
+);
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
+  executionTarget: DefaultProjectExecutionTarget,
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -253,6 +261,7 @@ export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
+  executionTarget: DefaultProjectExecutionTarget,
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode,
@@ -288,6 +297,7 @@ export const ProjectCreateCommand = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.optional(TrimmedNonEmptyString),
+  executionTarget: Schema.optional(ProjectExecutionTarget),
   createdAt: IsoDateTime,
 });
 
@@ -298,6 +308,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(TrimmedNonEmptyString),
+  executionTarget: Schema.optional(ProjectExecutionTarget),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -590,6 +601,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
+  executionTarget: DefaultProjectExecutionTarget,
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -600,6 +612,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  executionTarget: Schema.optional(ProjectExecutionTarget),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });
@@ -612,6 +625,7 @@ export const ProjectDeletedPayload = Schema.Struct({
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
+  executionTarget: DefaultProjectExecutionTarget,
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),

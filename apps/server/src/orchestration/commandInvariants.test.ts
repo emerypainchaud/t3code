@@ -29,6 +29,7 @@ const readModel: OrchestrationReadModel = {
       title: "Project A",
       workspaceRoot: "/tmp/project-a",
       defaultModel: "gpt-5-codex",
+      executionTarget: { kind: "workspace-local" },
       scripts: [],
       createdAt: now,
       updatedAt: now,
@@ -39,6 +40,7 @@ const readModel: OrchestrationReadModel = {
       title: "Project B",
       workspaceRoot: "/tmp/project-b",
       defaultModel: "gpt-5-codex",
+      executionTarget: { kind: "workspace-local" },
       scripts: [],
       createdAt: now,
       updatedAt: now,
@@ -49,6 +51,7 @@ const readModel: OrchestrationReadModel = {
     {
       id: ThreadId.makeUnsafe("thread-1"),
       projectId: ProjectId.makeUnsafe("project-a"),
+      executionTarget: { kind: "workspace-local" },
       title: "Thread A",
       model: "gpt-5-codex",
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -68,6 +71,7 @@ const readModel: OrchestrationReadModel = {
     {
       id: ThreadId.makeUnsafe("thread-2"),
       projectId: ProjectId.makeUnsafe("project-b"),
+      executionTarget: { kind: "workspace-local" },
       title: "Thread B",
       model: "gpt-5-codex",
       interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,

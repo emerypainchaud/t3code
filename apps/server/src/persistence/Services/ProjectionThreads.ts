@@ -9,6 +9,7 @@
 import {
   IsoDateTime,
   ProjectId,
+  ProjectExecutionTarget,
   ProviderInteractionMode,
   RuntimeMode,
   ThreadId,
@@ -22,6 +23,7 @@ import type { ProjectionRepositoryError } from "../Errors.ts";
 export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
+  executionTarget: ProjectExecutionTarget,
   title: Schema.String,
   model: Schema.String,
   runtimeMode: RuntimeMode,

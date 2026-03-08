@@ -3,6 +3,7 @@ import type {
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  ProjectExecutionTarget,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -80,6 +81,7 @@ export interface Project {
   cwd: string;
   model: string;
   expanded: boolean;
+  executionTarget: ProjectExecutionTarget;
   scripts: ProjectScript[];
 }
 
@@ -87,6 +89,7 @@ export interface Thread {
   id: ThreadId;
   codexThreadId: string | null;
   projectId: ProjectId;
+  executionTarget: ProjectExecutionTarget;
   title: string;
   model: string;
   runtimeMode: RuntimeMode;

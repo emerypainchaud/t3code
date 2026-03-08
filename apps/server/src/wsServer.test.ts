@@ -691,6 +691,7 @@ describe("WebSocket Server", () => {
         workspaceRoot: string;
         title: string;
         defaultModel: string | null;
+        executionTarget: { kind: string };
       }>;
       threads: Array<{
         id: string;
@@ -713,6 +714,7 @@ describe("WebSocket Server", () => {
           workspaceRoot: "/test/bootstrap-workspace",
           title: "bootstrap-workspace",
           defaultModel: "gpt-5-codex",
+          executionTarget: { kind: "workspace-local" },
         }),
       ]),
     );

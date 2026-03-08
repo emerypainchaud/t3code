@@ -7,6 +7,7 @@ import {
   TerminalCloseInput,
   TerminalEvent,
   TerminalOpenInput,
+  TerminalRestartInput,
   TerminalResizeInput,
   TerminalSessionSnapshot,
   TerminalThreadInput,
@@ -62,6 +63,7 @@ describe("TerminalOpenInput", () => {
   it("accepts optional env overrides", () => {
     const parsed = decodeSync(TerminalOpenInput, {
       threadId: "thread-1",
+      projectId: "project-1",
       cwd: "/tmp/project",
       cols: 100,
       rows: 24,
@@ -74,6 +76,7 @@ describe("TerminalOpenInput", () => {
       T3CODE_PROJECT_ROOT: "/tmp/project",
       CUSTOM_FLAG: "1",
     });
+    expect(parsed.projectId).toBe("project-1");
   });
 
   it("rejects invalid env keys", () => {
@@ -127,6 +130,19 @@ describe("TerminalResizeInput", () => {
         rows: 24,
       }),
     ).toBe(true);
+  });
+});
+
+describe("TerminalRestartInput", () => {
+  it("accepts optional project ids", () => {
+    const parsed = decodeSync(TerminalRestartInput, {
+      threadId: "thread-1",
+      projectId: "project-1",
+      cwd: "/tmp/project",
+      cols: 80,
+      rows: 24,
+    });
+    expect(parsed.projectId).toBe("project-1");
   });
 });
 

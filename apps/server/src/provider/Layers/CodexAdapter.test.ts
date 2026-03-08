@@ -182,6 +182,47 @@ validationLayer("CodexAdapterLive validation", (it) => {
       });
     }),
   );
+
+  it.effect("passes codex shell overrides through to the app-server manager", () =>
+    Effect.gen(function* () {
+      validationManager.startSessionImpl.mockClear();
+      const adapter = yield* CodexAdapter;
+
+      yield* adapter.startSession({
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        cwd: "/var/t3/mirrors/provider-project",
+        runtimeMode: "full-access",
+        providerOptions: {
+          codex: {
+            shellPath: "/tmp/t3-remote-shell.sh",
+            shellEnvironment: {
+              T3_REMOTE_HOST: "gpu-1.internal",
+              T3_REMOTE_PATH: "/srv/projects/provider-project",
+              T3_LOCAL_PATH: "/var/t3/mirrors/provider-project",
+            },
+          },
+        },
+      });
+
+      assert.deepStrictEqual(validationManager.startSessionImpl.mock.calls[0]?.[0], {
+        provider: "codex",
+        threadId: asThreadId("thread-1"),
+        cwd: "/var/t3/mirrors/provider-project",
+        runtimeMode: "full-access",
+        providerOptions: {
+          codex: {
+            shellPath: "/tmp/t3-remote-shell.sh",
+            shellEnvironment: {
+              T3_REMOTE_HOST: "gpu-1.internal",
+              T3_REMOTE_PATH: "/srv/projects/provider-project",
+              T3_LOCAL_PATH: "/var/t3/mirrors/provider-project",
+            },
+          },
+        },
+      });
+    }),
+  );
 });
 
 const sessionErrorManager = new FakeCodexManager();

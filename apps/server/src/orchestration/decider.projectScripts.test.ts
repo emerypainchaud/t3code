@@ -38,6 +38,9 @@ describe("decider project scripts", () => {
     const event = Array.isArray(result) ? result[0] : result;
     expect(event.type).toBe("project.created");
     expect((event.payload as { scripts: unknown[] }).scripts).toEqual([]);
+    expect((event.payload as { executionTarget: unknown }).executionTarget).toEqual({
+      kind: "workspace-local",
+    });
   });
 
   it("propagates scripts in project.meta.update payload", async () => {
@@ -60,6 +63,7 @@ describe("decider project scripts", () => {
           title: "Scripts",
           workspaceRoot: "/tmp/scripts",
           defaultModel: null,
+          executionTarget: { kind: "workspace-local" },
           scripts: [],
           createdAt: now,
           updatedAt: now,
@@ -114,6 +118,7 @@ describe("decider project scripts", () => {
           title: "Project",
           workspaceRoot: "/tmp/project",
           defaultModel: null,
+          executionTarget: { kind: "workspace-local" },
           scripts: [],
           createdAt: now,
           updatedAt: now,
@@ -135,6 +140,7 @@ describe("decider project scripts", () => {
         payload: {
           threadId: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
+          executionTarget: { kind: "workspace-local" },
           title: "Thread",
           model: "gpt-5-codex",
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -221,6 +227,7 @@ describe("decider project scripts", () => {
           title: "Project",
           workspaceRoot: "/tmp/project",
           defaultModel: null,
+          executionTarget: { kind: "workspace-local" },
           scripts: [],
           createdAt: now,
           updatedAt: now,
@@ -242,6 +249,7 @@ describe("decider project scripts", () => {
         payload: {
           threadId: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
+          executionTarget: { kind: "workspace-local" },
           title: "Thread",
           model: "gpt-5-codex",
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -300,6 +308,7 @@ describe("decider project scripts", () => {
           title: "Project",
           workspaceRoot: "/tmp/project",
           defaultModel: null,
+          executionTarget: { kind: "workspace-local" },
           scripts: [],
           createdAt: now,
           updatedAt: now,
@@ -321,6 +330,7 @@ describe("decider project scripts", () => {
         payload: {
           threadId: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
+          executionTarget: { kind: "workspace-local" },
           title: "Thread",
           model: "gpt-5-codex",
           interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
