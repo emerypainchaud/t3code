@@ -1673,6 +1673,7 @@ describe("WebSocket Server", () => {
   it("supports git.status over websocket", async () => {
     const statusResult = {
       branch: "feature/test",
+      forge: null,
       hasWorkingTreeChanges: true,
       workingTree: {
         files: [{ path: "src/index.ts", insertions: 7, deletions: 2 }],

@@ -1,7 +1,7 @@
 /**
  * TextGeneration - Effect service contract for AI-generated Git content.
  *
- * Generates commit messages and pull request titles/bodies from repository
+ * Generates commit messages and review-request titles/bodies from repository
  * context prepared by Git services.
  *
  * @module TextGeneration
@@ -61,7 +61,7 @@ export interface TextGenerationService {
 }
 
 /**
- * TextGenerationShape - Service API for commit/PR text generation.
+ * TextGenerationShape - Service API for commit/review-request text generation.
  */
 export interface TextGenerationShape {
   /**
@@ -72,7 +72,7 @@ export interface TextGenerationShape {
   ) => Effect.Effect<CommitMessageGenerationResult, TextGenerationError>;
 
   /**
-   * Generate pull request title/body from branch and diff context.
+   * Generate review-request title/body from branch and diff context.
    */
   readonly generatePrContent: (
     input: PrContentGenerationInput,
@@ -87,7 +87,7 @@ export interface TextGenerationShape {
 }
 
 /**
- * TextGeneration - Service tag for commit and PR text generation.
+ * TextGeneration - Service tag for commit and review-request text generation.
  */
 export class TextGeneration extends ServiceMap.Service<TextGeneration, TextGenerationShape>()(
   "t3/git/Services/TextGeneration",

@@ -740,6 +740,7 @@ const makeGitCore = Effect.gen(function* () {
 
       return {
         branch,
+        forge: null,
         upstreamRef,
         hasWorkingTreeChanges,
         workingTree: {
@@ -757,6 +758,7 @@ const makeGitCore = Effect.gen(function* () {
     statusDetails(input.cwd).pipe(
       Effect.map((details) => ({
         branch: details.branch,
+        forge: null,
         hasWorkingTreeChanges: details.hasWorkingTreeChanges,
         workingTree: details.workingTree,
         hasUpstream: details.hasUpstream,

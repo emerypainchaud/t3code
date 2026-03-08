@@ -7,6 +7,8 @@ const TrimmedNonEmptyStringSchema = TrimmedNonEmptyString;
 
 export const GitStackedAction = Schema.Literals(["commit", "commit_push", "commit_push_pr"]);
 export type GitStackedAction = typeof GitStackedAction.Type;
+export const GitForge = Schema.Literals(["github", "gitlab"]);
+export type GitForge = typeof GitForge.Type;
 const GitCommitStepStatus = Schema.Literals(["created", "skipped_no_changes"]);
 const GitPushStepStatus = Schema.Literals([
   "pushed",
@@ -120,6 +122,7 @@ export type GitInitInput = typeof GitInitInput.Type;
 // RPC Results
 
 const GitStatusPr = Schema.Struct({
+  forge: GitForge,
   number: PositiveInt,
   title: TrimmedNonEmptyStringSchema,
   url: Schema.String,
@@ -142,6 +145,7 @@ export const GitStatusResult = Schema.Struct({
     insertions: NonNegativeInt,
     deletions: NonNegativeInt,
   }),
+  forge: Schema.NullOr(GitForge),
   hasUpstream: Schema.Boolean,
   aheadCount: NonNegativeInt,
   behindCount: NonNegativeInt,
@@ -192,6 +196,7 @@ export const GitRunStackedActionResult = Schema.Struct({
   }),
   pr: Schema.Struct({
     status: GitPrStepStatus,
+    forge: Schema.optional(GitForge),
     url: Schema.optional(Schema.String),
     number: Schema.optional(PositiveInt),
     baseBranch: Schema.optional(TrimmedNonEmptyStringSchema),

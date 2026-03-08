@@ -9,7 +9,7 @@ import { ServiceMap } from "effect";
 import type { Effect } from "effect";
 
 import type { ProcessRunResult } from "../../processRunner";
-import type { GitHubCliError } from "../Errors.ts";
+import type { GitForgeCliError } from "../Errors.ts";
 
 export interface GitHubPullRequestSummary {
   readonly number: number;
@@ -17,16 +17,6 @@ export interface GitHubPullRequestSummary {
   readonly url: string;
   readonly baseRefName: string;
   readonly headRefName: string;
-  readonly state?: "open" | "closed" | "merged";
-  readonly isCrossRepository?: boolean;
-  readonly headRepositoryNameWithOwner?: string | null;
-  readonly headRepositoryOwnerLogin?: string | null;
-}
-
-export interface GitHubRepositoryCloneUrls {
-  readonly nameWithOwner: string;
-  readonly url: string;
-  readonly sshUrl: string;
 }
 
 /**
@@ -40,32 +30,16 @@ export interface GitHubCliShape {
     readonly cwd: string;
     readonly args: ReadonlyArray<string>;
     readonly timeoutMs?: number;
-  }) => Effect.Effect<ProcessRunResult, GitHubCliError>;
+  }) => Effect.Effect<ProcessRunResult, GitForgeCliError>;
 
   /**
    * List open pull requests for a head branch.
    */
   readonly listOpenPullRequests: (input: {
     readonly cwd: string;
-    readonly headSelector: string;
+    readonly headBranch: string;
     readonly limit?: number;
-  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitHubCliError>;
-
-  /**
-   * Resolve a pull request by URL, number, or branch-ish identifier.
-   */
-  readonly getPullRequest: (input: {
-    readonly cwd: string;
-    readonly reference: string;
-  }) => Effect.Effect<GitHubPullRequestSummary, GitHubCliError>;
-
-  /**
-   * Resolve clone URLs for a GitHub repository.
-   */
-  readonly getRepositoryCloneUrls: (input: {
-    readonly cwd: string;
-    readonly repository: string;
-  }) => Effect.Effect<GitHubRepositoryCloneUrls, GitHubCliError>;
+  }) => Effect.Effect<ReadonlyArray<GitHubPullRequestSummary>, GitForgeCliError>;
 
   /**
    * Create a pull request from branch context and body file.
@@ -73,26 +47,17 @@ export interface GitHubCliShape {
   readonly createPullRequest: (input: {
     readonly cwd: string;
     readonly baseBranch: string;
-    readonly headSelector: string;
+    readonly headBranch: string;
     readonly title: string;
     readonly bodyFile: string;
-  }) => Effect.Effect<void, GitHubCliError>;
+  }) => Effect.Effect<void, GitForgeCliError>;
 
   /**
    * Resolve repository default branch through GitHub metadata.
    */
   readonly getDefaultBranch: (input: {
     readonly cwd: string;
-  }) => Effect.Effect<string | null, GitHubCliError>;
-
-  /**
-   * Checkout a pull request into the current repository worktree.
-   */
-  readonly checkoutPullRequest: (input: {
-    readonly cwd: string;
-    readonly reference: string;
-    readonly force?: boolean;
-  }) => Effect.Effect<void, GitHubCliError>;
+  }) => Effect.Effect<string | null, GitForgeCliError>;
 }
 
 /**
