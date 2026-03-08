@@ -75,6 +75,8 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+  serverRotateWorkspaceAccessToken: "server.rotateWorkspaceAccessToken",
+  serverRotateWorkspaceTlsCertificate: "server.rotateWorkspaceTlsCertificate",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -139,6 +141,8 @@ const WebSocketRequestBody = Schema.Union([
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+  tagRequestBody(WS_METHODS.serverRotateWorkspaceAccessToken, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverRotateWorkspaceTlsCertificate, Schema.Struct({})),
 ]);
 
 export const WebSocketRequest = Schema.Struct({

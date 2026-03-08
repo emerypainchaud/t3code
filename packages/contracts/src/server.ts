@@ -45,6 +45,39 @@ export type ServerProviderStatus = typeof ServerProviderStatus.Type;
 
 const ServerProviderStatuses = Schema.Array(ServerProviderStatus);
 
+export const ServerWorkspaceAccessEndpointScope = Schema.Literals(["local", "lan", "public"]);
+export type ServerWorkspaceAccessEndpointScope = typeof ServerWorkspaceAccessEndpointScope.Type;
+
+export const ServerWorkspaceAccessEndpoint = Schema.Struct({
+  label: TrimmedNonEmptyString,
+  wsUrl: TrimmedNonEmptyString,
+  scope: ServerWorkspaceAccessEndpointScope,
+});
+export type ServerWorkspaceAccessEndpoint = typeof ServerWorkspaceAccessEndpoint.Type;
+
+export const ServerWorkspaceAccessTokenSource = Schema.Literals(["configured", "generated"]);
+export type ServerWorkspaceAccessTokenSource = typeof ServerWorkspaceAccessTokenSource.Type;
+
+export const ServerWorkspaceTlsMode = Schema.Literals(["disabled", "self-signed"]);
+export type ServerWorkspaceTlsMode = typeof ServerWorkspaceTlsMode.Type;
+
+export const ServerWorkspaceTls = Schema.Struct({
+  mode: ServerWorkspaceTlsMode,
+  fingerprintSha256: Schema.optional(TrimmedNonEmptyString),
+  validFrom: Schema.optional(IsoDateTime),
+  validTo: Schema.optional(IsoDateTime),
+});
+export type ServerWorkspaceTls = typeof ServerWorkspaceTls.Type;
+
+export const ServerWorkspaceAccess = Schema.Struct({
+  token: TrimmedNonEmptyString,
+  tokenSource: ServerWorkspaceAccessTokenSource,
+  loopbackBypassEnabled: Schema.Boolean,
+  endpoints: Schema.Array(ServerWorkspaceAccessEndpoint),
+  tls: ServerWorkspaceTls,
+});
+export type ServerWorkspaceAccess = typeof ServerWorkspaceAccess.Type;
+
 export const ServerConfig = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   keybindingsConfigPath: TrimmedNonEmptyString,
@@ -52,6 +85,7 @@ export const ServerConfig = Schema.Struct({
   issues: ServerConfigIssues,
   providers: ServerProviderStatuses,
   availableEditors: Schema.Array(EditorId),
+  workspaceAccess: ServerWorkspaceAccess,
 });
 export type ServerConfig = typeof ServerConfig.Type;
 
@@ -63,6 +97,13 @@ export const ServerUpsertKeybindingResult = Schema.Struct({
   issues: ServerConfigIssues,
 });
 export type ServerUpsertKeybindingResult = typeof ServerUpsertKeybindingResult.Type;
+
+export const ServerRotateWorkspaceAccessTokenResult = ServerWorkspaceAccess;
+export type ServerRotateWorkspaceAccessTokenResult = typeof ServerRotateWorkspaceAccessTokenResult.Type;
+
+export const ServerRotateWorkspaceTlsCertificateResult = ServerWorkspaceAccess;
+export type ServerRotateWorkspaceTlsCertificateResult =
+  typeof ServerRotateWorkspaceTlsCertificateResult.Type;
 
 export const ServerConfigUpdatedPayload = Schema.Struct({
   issues: ServerConfigIssues,

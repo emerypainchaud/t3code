@@ -1,15 +1,15 @@
-import {
-  type WsPush,
-  type WsPushChannel,
-  type WsPushMessage,
-  WebSocketResponse,
-  type WsResponse as WsResponseMessage,
-  WsResponse as WsResponseSchema,
-} from "@t3tools/contracts";
-import { decodeUnknownJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
-import { Result, Schema } from "effect";
+import { WebSocketResponse, WsPush, WsResponse } from "@t3tools/contracts";
+import { Cause, Schema } from "effect";
 
-type PushListener<C extends WsPushChannel> = (message: WsPushMessage<C>) => void;
+type PushListener = (data: unknown) => void;
+export const WS_CLIENT_PROTOCOL = "t3code.v1";
+export type WsConnectionState = "connecting" | "connected" | "reconnecting" | "disconnected";
+type ConnectionStateListener = (state: WsConnectionState) => void;
+
+interface WsTransportOptions {
+  url?: string;
+  authToken?: string | null;
+}
 
 interface PendingRequest {
   resolve: (result: unknown) => void;
@@ -17,19 +17,11 @@ interface PendingRequest {
   timeout: ReturnType<typeof setTimeout>;
 }
 
-interface SubscribeOptions {
-  readonly replayLatest?: boolean;
-}
-
-type TransportState = "connecting" | "open" | "reconnecting" | "closed" | "disposed";
-
 const REQUEST_TIMEOUT_MS = 60_000;
 const RECONNECT_DELAYS_MS = [500, 1_000, 2_000, 4_000, 8_000];
-const decodeWsResponse = decodeUnknownJsonResult(WsResponseSchema);
+const decodeWsResponseFromJson = Schema.decodeUnknownExit(Schema.fromJsonString(WsResponse));
+const isWsPushEnvelope = Schema.is(WsPush);
 const isWebSocketResponseEnvelope = Schema.is(WebSocketResponse);
-
-const isWsPushMessage = (value: WsResponseMessage): value is WsPush =>
-  "type" in value && value.type === "push";
 
 interface WsRequestEnvelope {
   id: string;
@@ -39,36 +31,33 @@ interface WsRequestEnvelope {
   };
 }
 
-function asError(value: unknown, fallback: string): Error {
-  if (value instanceof Error) {
-    return value;
-  }
-  return new Error(fallback);
-}
-
 export class WsTransport {
   private ws: WebSocket | null = null;
   private nextId = 1;
   private readonly pending = new Map<string, PendingRequest>();
-  private readonly listeners = new Map<string, Set<(message: WsPush) => void>>();
-  private readonly latestPushByChannel = new Map<string, WsPush>();
-  private readonly outboundQueue: string[] = [];
+  private readonly listeners = new Map<string, Set<PushListener>>();
+  private readonly connectionStateListeners = new Set<ConnectionStateListener>();
   private reconnectAttempt = 0;
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private disposed = false;
-  private state: TransportState = "connecting";
   private readonly url: string;
+  private readonly authToken: string | null;
+  private connectionState: WsConnectionState = "connecting";
 
-  constructor(url?: string) {
+  constructor(options?: string | WsTransportOptions) {
+    const resolvedOptions = typeof options === "string" ? { url: options } : (options ?? {});
     const bridgeUrl = window.desktopBridge?.getWsUrl();
+    // In dev mode, VITE_WS_URL points to the server's WebSocket endpoint.
+    // In production, the page is served by the WS server on the same host:port.
     const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-    this.url =
-      url ??
-      (bridgeUrl && bridgeUrl.length > 0
+    const defaultUrl =
+      bridgeUrl && bridgeUrl.length > 0
         ? bridgeUrl
         : envUrl && envUrl.length > 0
           ? envUrl
-          : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`);
+          : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`;
+    this.url = resolvedOptions.url ?? defaultUrl;
+    this.authToken = resolvedOptions.authToken?.trim() || null;
     this.connect();
   }
 
@@ -76,11 +65,9 @@ export class WsTransport {
     if (typeof method !== "string" || method.length === 0) {
       throw new Error("Request method is required");
     }
-
     const id = String(this.nextId++);
     const body = params != null ? { ...params, _tag: method } : { _tag: method };
     const message: WsRequestEnvelope = { id, body };
-    const encoded = JSON.stringify(message);
 
     return new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
@@ -94,53 +81,36 @@ export class WsTransport {
         timeout,
       });
 
-      this.send(encoded);
+      this.send(message);
     });
   }
 
-  subscribe<C extends WsPushChannel>(
-    channel: C,
-    listener: PushListener<C>,
-    options?: SubscribeOptions,
-  ): () => void {
+  subscribe(channel: string, listener: PushListener): () => void {
     let channelListeners = this.listeners.get(channel);
     if (!channelListeners) {
-      channelListeners = new Set<(message: WsPush) => void>();
+      channelListeners = new Set();
       this.listeners.set(channel, channelListeners);
     }
-
-    const wrappedListener = (message: WsPush) => {
-      listener(message as WsPushMessage<C>);
-    };
-    channelListeners.add(wrappedListener);
-
-    if (options?.replayLatest) {
-      const latest = this.latestPushByChannel.get(channel);
-      if (latest) {
-        wrappedListener(latest);
-      }
-    }
+    channelListeners.add(listener);
 
     return () => {
-      channelListeners?.delete(wrappedListener);
-      if (channelListeners?.size === 0) {
+      channelListeners!.delete(listener);
+      if (channelListeners!.size === 0) {
         this.listeners.delete(channel);
       }
     };
   }
 
-  getLatestPush<C extends WsPushChannel>(channel: C): WsPushMessage<C> | null {
-    const latest = this.latestPushByChannel.get(channel);
-    return latest ? (latest as WsPushMessage<C>) : null;
-  }
-
-  getState(): TransportState {
-    return this.state;
+  subscribeConnectionState(listener: ConnectionStateListener): () => void {
+    this.connectionStateListeners.add(listener);
+    listener(this.connectionState);
+    return () => {
+      this.connectionStateListeners.delete(listener);
+    };
   }
 
   dispose() {
     this.disposed = true;
-    this.state = "disposed";
     if (this.reconnectTimer !== null) {
       clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;
@@ -150,24 +120,21 @@ export class WsTransport {
       pending.reject(new Error("Transport disposed"));
     }
     this.pending.clear();
-    this.outboundQueue.length = 0;
     this.ws?.close();
     this.ws = null;
+    this.setConnectionState("disconnected");
   }
 
   private connect() {
-    if (this.disposed) {
-      return;
-    }
+    if (this.disposed) return;
+    this.setConnectionState(this.reconnectAttempt > 0 ? "reconnecting" : "connecting");
 
-    this.state = this.reconnectAttempt > 0 ? "reconnecting" : "connecting";
-    const ws = new WebSocket(this.url);
+    const ws = new WebSocket(this.url, buildWebSocketProtocols(this.authToken));
 
     ws.addEventListener("open", () => {
       this.ws = ws;
-      this.state = "open";
       this.reconnectAttempt = 0;
-      this.flushQueue();
+      this.setConnectionState("connected");
     });
 
     ws.addEventListener("message", (event) => {
@@ -175,38 +142,35 @@ export class WsTransport {
     });
 
     ws.addEventListener("close", () => {
-      if (this.ws === ws) {
-        this.ws = null;
-      }
-      if (this.disposed) {
-        this.state = "disposed";
-        return;
-      }
-      this.state = "closed";
+      this.ws = null;
+      this.setConnectionState(this.disposed ? "disconnected" : "reconnecting");
       this.scheduleReconnect();
     });
 
-    ws.addEventListener("error", (event) => {
-      // Log WebSocket errors for debugging (close event will follow)
-      console.warn("WebSocket connection error", { type: event.type, url: this.url });
+    ws.addEventListener("error", () => {
+      // close event will fire after error
     });
   }
 
   private handleMessage(raw: unknown) {
-    const result = decodeWsResponse(raw);
-    if (Result.isFailure(result)) {
-      console.warn("Dropped inbound WebSocket envelope", formatSchemaError(result.failure));
+    const exit = decodeWsResponseFromJson(raw);
+    if (exit._tag === "Failure") {
+      console.warn("Dropped inbound WebSocket envelope", {
+        reason: "decode-failed",
+        raw,
+        issue: Cause.pretty(exit.cause),
+      });
       return;
     }
+    const message = exit.value;
 
-    const message = result.success;
-    if (isWsPushMessage(message)) {
-      this.latestPushByChannel.set(message.channel, message);
+    // Push event
+    if (isWsPushEnvelope(message)) {
       const channelListeners = this.listeners.get(message.channel);
       if (channelListeners) {
         for (const listener of channelListeners) {
           try {
-            listener(message);
+            listener(message.data);
           } catch {
             // Swallow listener errors
           }
@@ -215,71 +179,87 @@ export class WsTransport {
       return;
     }
 
+    // Response to a request
     if (!isWebSocketResponseEnvelope(message)) {
       return;
     }
 
     const pending = this.pending.get(message.id);
-    if (!pending) {
-      return;
-    }
+    if (!pending) return;
 
     clearTimeout(pending.timeout);
     this.pending.delete(message.id);
 
     if (message.error) {
       pending.reject(new Error(message.error.message));
-      return;
-    }
-
-    pending.resolve(message.result);
-  }
-
-  private send(encodedMessage: string) {
-    if (this.disposed) {
-      return;
-    }
-
-    this.outboundQueue.push(encodedMessage);
-    try {
-      this.flushQueue();
-    } catch {
-      // Swallow: flushQueue has queued the message for retry on reconnect
+    } else {
+      pending.resolve(message.result);
     }
   }
 
-  private flushQueue() {
-    if (this.ws?.readyState !== WebSocket.OPEN) {
+  private send(message: WsRequestEnvelope) {
+    if (this.ws?.readyState === WebSocket.OPEN) {
+      this.ws.send(JSON.stringify(message));
       return;
     }
 
-    while (this.outboundQueue.length > 0) {
-      const message = this.outboundQueue.shift();
-      if (!message) {
-        continue;
-      }
-      try {
-        this.ws.send(message);
-      } catch (error) {
-        this.outboundQueue.unshift(message);
-        throw asError(error, "Failed to send WebSocket request.");
-      }
-    }
+    // If not connected, wait for connection
+    const waitForOpen = () => {
+      const check = setInterval(() => {
+        if (this.disposed) {
+          clearInterval(check);
+          return;
+        }
+        if (this.ws?.readyState === WebSocket.OPEN) {
+          clearInterval(check);
+          this.ws.send(JSON.stringify(message));
+        }
+      }, 50);
+
+      // Give up after timeout (the pending request will time out on its own)
+      setTimeout(() => clearInterval(check), REQUEST_TIMEOUT_MS);
+    };
+    waitForOpen();
   }
 
   private scheduleReconnect() {
-    if (this.disposed || this.reconnectTimer !== null) {
-      return;
-    }
+    if (this.disposed) return;
 
     const delay =
       RECONNECT_DELAYS_MS[Math.min(this.reconnectAttempt, RECONNECT_DELAYS_MS.length - 1)] ??
       RECONNECT_DELAYS_MS[0]!;
 
-    this.reconnectAttempt += 1;
+    this.reconnectAttempt++;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
       this.connect();
     }, delay);
   }
+
+  private setConnectionState(nextState: WsConnectionState) {
+    if (this.connectionState === nextState) {
+      return;
+    }
+    this.connectionState = nextState;
+    for (const listener of this.connectionStateListeners) {
+      try {
+        listener(nextState);
+      } catch {
+        // Swallow listener errors.
+      }
+    }
+  }
+}
+
+function buildWebSocketProtocols(authToken: string | null): string[] {
+  return authToken ? [WS_CLIENT_PROTOCOL, encodeAuthTokenProtocol(authToken)] : [WS_CLIENT_PROTOCOL];
+}
+
+function encodeAuthTokenProtocol(authToken: string): string {
+  const bytes = new TextEncoder().encode(authToken);
+  let binary = "";
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+  return `t3code.auth.${btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "")}`;
 }

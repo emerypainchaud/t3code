@@ -7,13 +7,14 @@
 
 import type { ThreadId } from "@t3tools/contracts";
 import { create } from "zustand";
-import { createJSONStorage, persist } from "zustand/middleware";
+import { persist } from "zustand/middleware";
 import {
   DEFAULT_THREAD_TERMINAL_HEIGHT,
   DEFAULT_THREAD_TERMINAL_ID,
   MAX_TERMINALS_PER_GROUP,
   type ThreadTerminalGroup,
 } from "./types";
+import { createWorkspaceScopedJsonStorage } from "./workspaceStorage";
 
 interface ThreadTerminalState {
   terminalOpen: boolean;
@@ -542,10 +543,15 @@ export const useTerminalStateStore = create<TerminalStateStoreState>()(
     {
       name: TERMINAL_STATE_STORAGE_KEY,
       version: 1,
-      storage: createJSONStorage(() => localStorage),
+      storage: createWorkspaceScopedJsonStorage(),
       partialize: (state) => ({
         terminalStateByThreadId: state.terminalStateByThreadId,
       }),
     },
   ),
 );
+
+export function rehydrateTerminalStateStoreForActiveWorkspace(): void {
+  useTerminalStateStore.setState({ terminalStateByThreadId: {} });
+  void useTerminalStateStore.persist.rehydrate();
+}

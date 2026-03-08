@@ -11,6 +11,8 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
+const INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:inspect-remote-tls-certificate";
+const TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:trust-remote-tls-certificate";
 const wsUrl = process.env.T3CODE_DESKTOP_WS_URL ?? null;
 
 contextBridge.exposeInMainWorld("desktopBridge", {
@@ -34,6 +36,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
   getUpdateState: () => ipcRenderer.invoke(UPDATE_GET_STATE_CHANNEL),
   downloadUpdate: () => ipcRenderer.invoke(UPDATE_DOWNLOAD_CHANNEL),
   installUpdate: () => ipcRenderer.invoke(UPDATE_INSTALL_CHANNEL),
+  inspectRemoteTlsCertificate: (url) =>
+    ipcRenderer.invoke(INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL, url),
+  trustRemoteTlsCertificate: (input) =>
+    ipcRenderer.invoke(TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL, input),
   onUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (typeof state !== "object" || state === null) return;

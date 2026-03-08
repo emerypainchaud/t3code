@@ -1,20 +1,175 @@
 import {
+  OrchestrationEvent,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   type ContextMenuItem,
   type NativeApi,
   ServerConfigUpdatedPayload,
+  TerminalEvent,
   WS_CHANNELS,
   WS_METHODS,
-  type WsWelcomePayload,
+  WsWelcomePayload,
 } from "@t3tools/contracts";
+import { Cause, Schema } from "effect";
 
+import { getAppSettingsSnapshot, resolveActiveWorkspace, subscribeAppSettings } from "./appSettings";
 import { showContextMenuFallback } from "./contextMenuFallback";
+import { setWorkspaceConnectionState } from "./workspaceConnectionState";
 import { WsTransport } from "./wsTransport";
 
-let instance: { api: NativeApi; transport: WsTransport } | null = null;
+let instance: NativeApi | null = null;
+let transport: WsTransport | null = null;
+let transportSignature: string | null = null;
+let transportUnsubscribe: (() => void) | null = null;
+let settingsUnsubscribe: (() => void) | null = null;
+
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
+const terminalEventListeners = new Set<(payload: TerminalEvent) => void>();
+const domainEventListeners = new Set<(payload: OrchestrationEvent) => void>();
+
+let lastWelcome: WsWelcomePayload | null = null;
+let lastServerConfigUpdated: ServerConfigUpdatedPayload | null = null;
+
+const decodeAndWarnOnFailure = <T>(
+  schema: Schema.Schema<T> & { readonly DecodingServices: never },
+  raw: unknown,
+): T | null => {
+  const decoded = Schema.decodeUnknownExit(schema)(raw);
+  if (decoded._tag === "Failure") {
+    console.warn("Dropped inbound WebSocket push payload", {
+      reason: "decode-failed",
+      raw,
+      issue: Cause.pretty(decoded.cause),
+    });
+    return null;
+  }
+  return decoded.value;
+};
+
+function activeTransportConfig() {
+  const workspace = resolveActiveWorkspace(getAppSettingsSnapshot());
+  return {
+    workspaceId: workspace.id,
+    url: workspace.isLocal ? undefined : workspace.wsUrl,
+    authToken: workspace.isLocal ? null : workspace.authToken,
+  };
+}
+
+function toTransportSignature(): string {
+  const config = activeTransportConfig();
+  return `${config.workspaceId}\u0000${config.url ?? ""}\u0000${config.authToken ?? ""}`;
+}
+
+function disposeTransportSubscription(): void {
+  if (transportUnsubscribe) {
+    transportUnsubscribe();
+    transportUnsubscribe = null;
+  }
+}
+
+function attachTransportListeners(nextTransport: WsTransport, workspaceId: string): void {
+  const unsubscribes = [
+    nextTransport.subscribeConnectionState((state) => {
+      setWorkspaceConnectionState(workspaceId, state);
+    }),
+    nextTransport.subscribe(WS_CHANNELS.serverWelcome, (data) => {
+      const payload = decodeAndWarnOnFailure(WsWelcomePayload, data);
+      if (!payload) {
+        return;
+      }
+      lastWelcome = payload;
+      for (const listener of welcomeListeners) {
+        try {
+          listener(payload);
+        } catch {
+          // Swallow listener errors.
+        }
+      }
+    }),
+    nextTransport.subscribe(WS_CHANNELS.serverConfigUpdated, (data) => {
+      const payload = decodeAndWarnOnFailure(ServerConfigUpdatedPayload, data);
+      if (!payload) {
+        return;
+      }
+      lastServerConfigUpdated = payload;
+      for (const listener of serverConfigUpdatedListeners) {
+        try {
+          listener(payload);
+        } catch {
+          // Swallow listener errors.
+        }
+      }
+    }),
+    nextTransport.subscribe(WS_CHANNELS.terminalEvent, (data) => {
+      const payload = decodeAndWarnOnFailure(TerminalEvent, data);
+      if (!payload) {
+        return;
+      }
+      for (const listener of terminalEventListeners) {
+        try {
+          listener(payload);
+        } catch {
+          // Swallow listener errors.
+        }
+      }
+    }),
+    nextTransport.subscribe(ORCHESTRATION_WS_CHANNELS.domainEvent, (data) => {
+      const payload = decodeAndWarnOnFailure(OrchestrationEvent, data);
+      if (!payload) {
+        return;
+      }
+      for (const listener of domainEventListeners) {
+        try {
+          listener(payload);
+        } catch {
+          // Swallow listener errors.
+        }
+      }
+    }),
+  ];
+
+  transportUnsubscribe = () => {
+    for (const unsubscribe of unsubscribes) {
+      unsubscribe();
+    }
+  };
+}
+
+function ensureTransport(): WsTransport {
+  const nextSignature = toTransportSignature();
+  if (transport && transportSignature === nextSignature) {
+    return transport;
+  }
+
+  disposeTransportSubscription();
+  transport?.dispose();
+  transport = null;
+  transportSignature = nextSignature;
+  lastWelcome = null;
+  lastServerConfigUpdated = null;
+
+  const config = activeTransportConfig();
+  transport = new WsTransport({
+    ...(config.url ? { url: config.url } : {}),
+    ...(config.authToken ? { authToken: config.authToken } : {}),
+  });
+  setWorkspaceConnectionState(config.workspaceId, "connecting");
+  attachTransportListeners(transport, config.workspaceId);
+  return transport;
+}
+
+function ensureSettingsSubscription(): void {
+  if (settingsUnsubscribe || typeof window === "undefined") {
+    return;
+  }
+  settingsUnsubscribe = subscribeAppSettings(() => {
+    if (!instance) {
+      return;
+    }
+    ensureTransport();
+  });
+}
 
 /**
  * Subscribe to the server welcome message. If a welcome was already received
@@ -24,12 +179,11 @@ const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayloa
 export function onServerWelcome(listener: (payload: WsWelcomePayload) => void): () => void {
   welcomeListeners.add(listener);
 
-  const latestWelcome = instance?.transport.getLatestPush(WS_CHANNELS.serverWelcome)?.data ?? null;
-  if (latestWelcome) {
+  if (lastWelcome) {
     try {
-      listener(latestWelcome);
+      listener(lastWelcome);
     } catch {
-      // Swallow listener errors
+      // Swallow listener errors.
     }
   }
 
@@ -47,13 +201,11 @@ export function onServerConfigUpdated(
 ): () => void {
   serverConfigUpdatedListeners.add(listener);
 
-  const latestConfig =
-    instance?.transport.getLatestPush(WS_CHANNELS.serverConfigUpdated)?.data ?? null;
-  if (latestConfig) {
+  if (lastServerConfigUpdated) {
     try {
-      listener(latestConfig);
+      listener(lastServerConfigUpdated);
     } catch {
-      // Swallow listener errors
+      // Swallow listener errors.
     }
   }
 
@@ -63,32 +215,14 @@ export function onServerConfigUpdated(
 }
 
 export function createWsNativeApi(): NativeApi {
-  if (instance) return instance.api;
+  if (instance) {
+    return instance;
+  }
 
-  const transport = new WsTransport();
+  ensureSettingsSubscription();
+  ensureTransport();
 
-  transport.subscribe(WS_CHANNELS.serverWelcome, (message) => {
-    const payload = message.data;
-    for (const listener of welcomeListeners) {
-      try {
-        listener(payload);
-      } catch {
-        // Swallow listener errors
-      }
-    }
-  });
-  transport.subscribe(WS_CHANNELS.serverConfigUpdated, (message) => {
-    const payload = message.data;
-    for (const listener of serverConfigUpdatedListeners) {
-      try {
-        listener(payload);
-      } catch {
-        // Swallow listener errors
-      }
-    }
-  });
-
-  const api: NativeApi = {
+  instance = {
     dialogs: {
       pickFolder: async () => {
         if (!window.desktopBridge) return null;
@@ -102,22 +236,27 @@ export function createWsNativeApi(): NativeApi {
       },
     },
     terminal: {
-      open: (input) => transport.request(WS_METHODS.terminalOpen, input),
-      write: (input) => transport.request(WS_METHODS.terminalWrite, input),
-      resize: (input) => transport.request(WS_METHODS.terminalResize, input),
-      clear: (input) => transport.request(WS_METHODS.terminalClear, input),
-      restart: (input) => transport.request(WS_METHODS.terminalRestart, input),
-      close: (input) => transport.request(WS_METHODS.terminalClose, input),
-      onEvent: (callback) =>
-        transport.subscribe(WS_CHANNELS.terminalEvent, (message) => callback(message.data)),
+      open: (input) => ensureTransport().request(WS_METHODS.terminalOpen, input),
+      write: (input) => ensureTransport().request(WS_METHODS.terminalWrite, input),
+      resize: (input) => ensureTransport().request(WS_METHODS.terminalResize, input),
+      clear: (input) => ensureTransport().request(WS_METHODS.terminalClear, input),
+      restart: (input) => ensureTransport().request(WS_METHODS.terminalRestart, input),
+      close: (input) => ensureTransport().request(WS_METHODS.terminalClose, input),
+      onEvent: (callback) => {
+        terminalEventListeners.add(callback);
+        ensureTransport();
+        return () => {
+          terminalEventListeners.delete(callback);
+        };
+      },
     },
     projects: {
-      searchEntries: (input) => transport.request(WS_METHODS.projectsSearchEntries, input),
-      writeFile: (input) => transport.request(WS_METHODS.projectsWriteFile, input),
+      searchEntries: (input) => ensureTransport().request(WS_METHODS.projectsSearchEntries, input),
+      writeFile: (input) => ensureTransport().request(WS_METHODS.projectsWriteFile, input),
     },
     shell: {
       openInEditor: (cwd, editor) =>
-        transport.request(WS_METHODS.shellOpenInEditor, { cwd, editor }),
+        ensureTransport().request(WS_METHODS.shellOpenInEditor, { cwd, editor }),
       openExternal: async (url) => {
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);
@@ -127,24 +266,19 @@ export function createWsNativeApi(): NativeApi {
           return;
         }
 
-        // Some mobile browsers can return null here even when the tab opens.
-        // Avoid false negatives and let the browser handle popup policy.
         window.open(url, "_blank", "noopener,noreferrer");
       },
     },
     git: {
-      pull: (input) => transport.request(WS_METHODS.gitPull, input),
-      status: (input) => transport.request(WS_METHODS.gitStatus, input),
-      runStackedAction: (input) => transport.request(WS_METHODS.gitRunStackedAction, input),
-      listBranches: (input) => transport.request(WS_METHODS.gitListBranches, input),
-      createWorktree: (input) => transport.request(WS_METHODS.gitCreateWorktree, input),
-      removeWorktree: (input) => transport.request(WS_METHODS.gitRemoveWorktree, input),
-      createBranch: (input) => transport.request(WS_METHODS.gitCreateBranch, input),
-      checkout: (input) => transport.request(WS_METHODS.gitCheckout, input),
-      init: (input) => transport.request(WS_METHODS.gitInit, input),
-      resolvePullRequest: (input) => transport.request(WS_METHODS.gitResolvePullRequest, input),
-      preparePullRequestThread: (input) =>
-        transport.request(WS_METHODS.gitPreparePullRequestThread, input),
+      pull: (input) => ensureTransport().request(WS_METHODS.gitPull, input),
+      status: (input) => ensureTransport().request(WS_METHODS.gitStatus, input),
+      runStackedAction: (input) => ensureTransport().request(WS_METHODS.gitRunStackedAction, input),
+      listBranches: (input) => ensureTransport().request(WS_METHODS.gitListBranches, input),
+      createWorktree: (input) => ensureTransport().request(WS_METHODS.gitCreateWorktree, input),
+      removeWorktree: (input) => ensureTransport().request(WS_METHODS.gitRemoveWorktree, input),
+      createBranch: (input) => ensureTransport().request(WS_METHODS.gitCreateBranch, input),
+      checkout: (input) => ensureTransport().request(WS_METHODS.gitCheckout, input),
+      init: (input) => ensureTransport().request(WS_METHODS.gitInit, input),
     },
     contextMenu: {
       show: async <T extends string>(
@@ -158,25 +292,43 @@ export function createWsNativeApi(): NativeApi {
       },
     },
     server: {
-      getConfig: () => transport.request(WS_METHODS.serverGetConfig),
-      upsertKeybinding: (input) => transport.request(WS_METHODS.serverUpsertKeybinding, input),
+      getConfig: () => ensureTransport().request(WS_METHODS.serverGetConfig),
+      upsertKeybinding: (input) => ensureTransport().request(WS_METHODS.serverUpsertKeybinding, input),
+      rotateWorkspaceAccessToken: () =>
+        ensureTransport().request(WS_METHODS.serverRotateWorkspaceAccessToken),
+      rotateWorkspaceTlsCertificate: () =>
+        ensureTransport().request(WS_METHODS.serverRotateWorkspaceTlsCertificate),
+      inspectRemoteTlsCertificate: async (url) => {
+        if (!window.desktopBridge) {
+          throw new Error("Certificate trust is only available in the desktop app.");
+        }
+        return window.desktopBridge.inspectRemoteTlsCertificate(url);
+      },
+      trustRemoteTlsCertificate: async (input) => {
+        if (!window.desktopBridge) {
+          throw new Error("Certificate trust is only available in the desktop app.");
+        }
+        await window.desktopBridge.trustRemoteTlsCertificate(input);
+      },
     },
     orchestration: {
-      getSnapshot: () => transport.request(ORCHESTRATION_WS_METHODS.getSnapshot),
+      getSnapshot: () => ensureTransport().request(ORCHESTRATION_WS_METHODS.getSnapshot),
       dispatchCommand: (command) =>
-        transport.request(ORCHESTRATION_WS_METHODS.dispatchCommand, { command }),
-      getTurnDiff: (input) => transport.request(ORCHESTRATION_WS_METHODS.getTurnDiff, input),
+        ensureTransport().request(ORCHESTRATION_WS_METHODS.dispatchCommand, { command }),
+      getTurnDiff: (input) => ensureTransport().request(ORCHESTRATION_WS_METHODS.getTurnDiff, input),
       getFullThreadDiff: (input) =>
-        transport.request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, input),
+        ensureTransport().request(ORCHESTRATION_WS_METHODS.getFullThreadDiff, input),
       replayEvents: (fromSequenceExclusive) =>
-        transport.request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
-      onDomainEvent: (callback) =>
-        transport.subscribe(ORCHESTRATION_WS_CHANNELS.domainEvent, (message) =>
-          callback(message.data),
-        ),
+        ensureTransport().request(ORCHESTRATION_WS_METHODS.replayEvents, { fromSequenceExclusive }),
+      onDomainEvent: (callback) => {
+        domainEventListeners.add(callback);
+        ensureTransport();
+        return () => {
+          domainEventListeners.delete(callback);
+        };
+      },
     },
   };
 
-  instance = { api, transport };
-  return api;
+  return instance;
 }

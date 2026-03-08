@@ -111,6 +111,15 @@ function createBaseServerConfig(): ServerConfig {
       },
     ],
     availableEditors: [],
+    workspaceAccess: {
+      token: "workspace-token",
+      tokenSource: "generated",
+      loopbackBypassEnabled: true,
+      endpoints: [{ label: "Localhost", wsUrl: "ws://localhost:3773", scope: "local" }],
+      tls: {
+        mode: "disabled",
+      },
+    },
   };
 }
 

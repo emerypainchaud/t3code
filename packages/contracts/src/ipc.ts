@@ -24,7 +24,13 @@ import type {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type {
+  ServerConfig,
+  ServerRotateWorkspaceAccessTokenResult,
+  ServerRotateWorkspaceTlsCertificateResult,
+  ServerUpsertKeybindingInput,
+  ServerUpsertKeybindingResult,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -35,7 +41,6 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal";
-import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -94,6 +99,24 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export interface DesktopRemoteTlsCertificateInspection {
+  url: string;
+  hostname: string;
+  fingerprintSha256: string;
+  subjectName: string | null;
+  issuerName: string | null;
+  validFrom: string | null;
+  validTo: string | null;
+  verificationError: string | null;
+  trusted: boolean;
+  selfSigned: boolean;
+}
+
+export interface DesktopTrustRemoteTlsCertificateInput {
+  url: string;
+  fingerprintSha256: string;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
   pickFolder: () => Promise<string | null>;
@@ -109,6 +132,8 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  inspectRemoteTlsCertificate: (url: string) => Promise<DesktopRemoteTlsCertificateInspection>;
+  trustRemoteTlsCertificate: (input: DesktopTrustRemoteTlsCertificateInput) => Promise<void>;
 }
 
 export interface NativeApi {
@@ -159,6 +184,10 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    rotateWorkspaceAccessToken: () => Promise<ServerRotateWorkspaceAccessTokenResult>;
+    rotateWorkspaceTlsCertificate: () => Promise<ServerRotateWorkspaceTlsCertificateResult>;
+    inspectRemoteTlsCertificate: (url: string) => Promise<DesktopRemoteTlsCertificateInspection>;
+    trustRemoteTlsCertificate: (input: DesktopTrustRemoteTlsCertificateInput) => Promise<void>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;
