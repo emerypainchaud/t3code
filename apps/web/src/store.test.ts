@@ -1,13 +1,13 @@
 import {
-  DEFAULT_MODEL_BY_PROVIDER,
+  MessageId,
   ProjectId,
   ThreadId,
   TurnId,
   type OrchestrationReadModel,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { markThreadUnread, reorderProjects, syncServerReadModel, type AppState } from "./store";
+import { markThreadUnread, syncServerReadModel, type AppState } from "./store";
 import { DEFAULT_INTERACTION_MODE, DEFAULT_RUNTIME_MODE, type Thread } from "./types";
 
 function makeThread(overrides: Partial<Thread> = {}): Thread {
@@ -105,21 +105,51 @@ function makeReadModel(thread: OrchestrationReadModel["threads"][number]): Orche
   };
 }
 
-function makeReadModelProject(
-  overrides: Partial<OrchestrationReadModel["projects"][number]>,
-): OrchestrationReadModel["projects"][number] {
-  return {
-    id: ProjectId.makeUnsafe("project-1"),
-    title: "Project",
-    workspaceRoot: "/tmp/project",
-    defaultModel: "gpt-5.3-codex",
-    createdAt: "2026-02-27T00:00:00.000Z",
-    updatedAt: "2026-02-27T00:00:00.000Z",
-    deletedAt: null,
-    scripts: [],
-    ...overrides,
-  };
-}
+const originalWindow = globalThis.window;
+
+beforeEach(() => {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: {
+      location: { origin: "http://localhost:3000" },
+      desktopBridge: undefined,
+      localStorage: {
+        getItem: vi.fn((key: string) => {
+          if (key !== "t3code:app-settings:v1") {
+            return null;
+          }
+          return JSON.stringify({
+            codexBinaryPath: "",
+            codexHomePath: "",
+            confirmThreadDelete: true,
+            enableAssistantStreaming: false,
+            codexServiceTier: "auto",
+            customCodexModels: [],
+            customClaudeCodeModels: [],
+            activeWorkspaceId: "remote-1",
+            workspaces: [
+              {
+                id: "remote-1",
+                name: "Remote",
+                wsUrl: "wss://remote.example.com/socket",
+                authToken: "secret",
+              },
+            ],
+          });
+        }),
+        setItem: vi.fn(),
+        removeItem: vi.fn(),
+      },
+    },
+  });
+});
+
+afterEach(() => {
+  Object.defineProperty(globalThis, "window", {
+    configurable: true,
+    value: originalWindow,
+  });
+});
 
 describe("store pure functions", () => {
   it("markThreadUnread moves lastVisitedAt before completion for a completed thread", () => {
@@ -160,50 +190,10 @@ describe("store pure functions", () => {
 
     expect(next).toEqual(initialState);
   });
-
-  it("reorderProjects moves a project to a target index", () => {
-    const project1 = ProjectId.makeUnsafe("project-1");
-    const project2 = ProjectId.makeUnsafe("project-2");
-    const project3 = ProjectId.makeUnsafe("project-3");
-    const state: AppState = {
-      projects: [
-        {
-          id: project1,
-          name: "Project 1",
-          cwd: "/tmp/project-1",
-          model: DEFAULT_MODEL_BY_PROVIDER.codex,
-          expanded: true,
-          scripts: [],
-        },
-        {
-          id: project2,
-          name: "Project 2",
-          cwd: "/tmp/project-2",
-          model: DEFAULT_MODEL_BY_PROVIDER.codex,
-          expanded: true,
-          scripts: [],
-        },
-        {
-          id: project3,
-          name: "Project 3",
-          cwd: "/tmp/project-3",
-          model: DEFAULT_MODEL_BY_PROVIDER.codex,
-          expanded: true,
-          scripts: [],
-        },
-      ],
-      threads: [],
-      threadsHydrated: true,
-    };
-
-    const next = reorderProjects(state, project1, project3);
-
-    expect(next.projects.map((project) => project.id)).toEqual([project2, project3, project1]);
-  });
 });
 
 describe("store read model sync", () => {
-  it("falls back to the codex default for unsupported provider models without an active session", () => {
+  it("preserves recognized Claude models even without an active session", () => {
     const initialState = makeState(makeThread());
     const readModel = makeReadModel(
       makeReadModelThread({
@@ -213,60 +203,40 @@ describe("store read model sync", () => {
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.threads[0]?.model).toBe(DEFAULT_MODEL_BY_PROVIDER.codex);
+    expect(next.threads[0]?.model).toBe("claude-opus-4-6");
   });
 
-  it("preserves the current project order when syncing incoming read model updates", () => {
-    const project1 = ProjectId.makeUnsafe("project-1");
-    const project2 = ProjectId.makeUnsafe("project-2");
-    const project3 = ProjectId.makeUnsafe("project-3");
-    const initialState: AppState = {
-      projects: [
-        {
-          id: project2,
-          name: "Project 2",
-          cwd: "/tmp/project-2",
-          model: DEFAULT_MODEL_BY_PROVIDER.codex,
-          expanded: true,
-          scripts: [],
-        },
-        {
-          id: project1,
-          name: "Project 1",
-          cwd: "/tmp/project-1",
-          model: DEFAULT_MODEL_BY_PROVIDER.codex,
-          expanded: true,
-          scripts: [],
-        },
-      ],
-      threads: [],
-      threadsHydrated: true,
-    };
-    const readModel: OrchestrationReadModel = {
-      snapshotSequence: 2,
-      updatedAt: "2026-02-27T00:00:00.000Z",
-      projects: [
-        makeReadModelProject({
-          id: project1,
-          title: "Project 1",
-          workspaceRoot: "/tmp/project-1",
-        }),
-        makeReadModelProject({
-          id: project2,
-          title: "Project 2",
-          workspaceRoot: "/tmp/project-2",
-        }),
-        makeReadModelProject({
-          id: project3,
-          title: "Project 3",
-          workspaceRoot: "/tmp/project-3",
-        }),
-      ],
-      threads: [],
-    };
+  it("resolves attachment preview urls against the active remote workspace origin", () => {
+    const initialState = makeState(makeThread());
+    const readModel = makeReadModel(
+      makeReadModelThread({
+        messages: [
+          {
+            id: MessageId.makeUnsafe("message-1"),
+            role: "user",
+            text: "hello",
+            turnId: null,
+            createdAt: "2026-02-27T00:00:00.000Z",
+            updatedAt: "2026-02-27T00:00:00.000Z",
+            streaming: false,
+            attachments: [
+              {
+                type: "image",
+                id: "attachment-1",
+                name: "image.png",
+                mimeType: "image/png",
+                sizeBytes: 128,
+              },
+            ],
+          },
+        ],
+      }),
+    );
 
     const next = syncServerReadModel(initialState, readModel);
 
-    expect(next.projects.map((project) => project.id)).toEqual([project2, project1, project3]);
+    expect(next.threads[0]?.messages[0]?.attachments?.[0]?.previewUrl).toBe(
+      "https://remote.example.com/attachments/attachment-1",
+    );
   });
 });

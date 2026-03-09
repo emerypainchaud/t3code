@@ -1,12 +1,16 @@
 import fs from "node:fs";
 
-import type { ProjectExecutionTarget, ProviderSessionStartInput } from "@t3tools/contracts";
+import type {
+  ProjectExecutionTarget,
+  ProviderKind,
+  ProviderSessionStartInput,
+} from "@t3tools/contracts";
 import { Effect, Layer, Schema, ServiceMap } from "effect";
 
 import { ServerConfig } from "./config.ts";
 import { runProcess, type ProcessRunResult } from "./processRunner.ts";
 import {
-  buildRemoteCodexProviderOptions,
+  buildRemoteProviderOptions,
   buildRemoteTerminalEnvironment,
   ensureRemoteShellScript,
   remoteExecutionMutagenLabelSelector,
@@ -57,6 +61,7 @@ export interface RemoteExecutionManagerShape {
     input: {
       readonly cwd: string | undefined;
       readonly target: ProjectExecutionTarget;
+      readonly provider?: ProviderKind;
     },
   ) => Effect.Effect<RemoteExecutionLaunchConfig, RemoteExecutionError>;
   readonly getSyncState: (
@@ -198,7 +203,8 @@ export class RemoteExecutionManagerRuntime implements RemoteExecutionManagerShap
               target,
             }),
           },
-          providerOptions: buildRemoteCodexProviderOptions({
+          providerOptions: buildRemoteProviderOptions({
+            provider: input.provider ?? "codex",
             stateDir: this.stateDir,
             target,
           }),

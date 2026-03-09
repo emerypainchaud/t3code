@@ -29,6 +29,7 @@ describe("RemoteExecutionManagerRuntime", () => {
     const launch = await Effect.runPromise(
       manager.prepareLaunch({
         cwd: undefined,
+        provider: "codex",
         target: {
           kind: "ssh",
           label: "GPU box",
@@ -88,6 +89,7 @@ describe("RemoteExecutionManagerRuntime", () => {
       Effect.runPromise(
         manager.prepareLaunch({
           cwd: target.sync.localPath,
+          provider: "codex",
           target,
         }),
       ),
@@ -96,5 +98,46 @@ describe("RemoteExecutionManagerRuntime", () => {
     const syncState = await Effect.runPromise(manager.getSyncState(target));
     expect(syncState.status).toBe("error");
     expect(syncState.detail).toContain("Command not found: mutagen");
+  });
+
+  it("builds claude remote provider options for ssh targets", async () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-remote-manager-"));
+    createdDirs.push(stateDir);
+    const processRunner = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: "", stderr: "", code: 0, signal: null, timedOut: false })
+      .mockResolvedValueOnce({ stdout: "", stderr: "", code: 0, signal: null, timedOut: false })
+      .mockResolvedValueOnce({ stdout: "", stderr: "", code: 0, signal: null, timedOut: false });
+    const manager = new RemoteExecutionManagerRuntime(stateDir, processRunner);
+
+    const launch = await Effect.runPromise(
+      manager.prepareLaunch({
+        cwd: undefined,
+        provider: "claudeCode",
+        target: {
+          kind: "ssh",
+          label: "GPU box",
+          host: "gpu-1.internal",
+          username: "ubuntu",
+          port: 2222,
+          remotePath: "/srv/projects/provider-project",
+          sync: {
+            mode: "mutagen",
+            localPath: path.join(stateDir, "mirror"),
+            ignores: ["node_modules", ".next"],
+          },
+        },
+      }),
+    );
+
+    expect(launch.providerOptions).toMatchObject({
+      claudeCode: {
+        shellEnvironment: {
+          T3_REMOTE_HOST: "gpu-1.internal",
+          T3_REMOTE_PORT: "2222",
+          T3_REMOTE_USER: "ubuntu",
+        },
+      },
+    });
   });
 });

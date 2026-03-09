@@ -37,7 +37,7 @@ import { ProviderCommandReactor } from "../Services/ProviderCommandReactor.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { RemoteExecutionManager, type RemoteExecutionManagerShape } from "../../remoteExecutionManager.ts";
 import {
-  buildRemoteCodexProviderOptions,
+  buildRemoteProviderOptions,
   buildRemoteTerminalEnvironment,
 } from "../../remoteExecution.ts";
 
@@ -213,7 +213,7 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(SqlitePersistenceMemory),
     );
     const remoteExecutionService: RemoteExecutionManagerShape = {
-      prepareLaunch: ({ cwd, target }) =>
+      prepareLaunch: ({ cwd, target, provider }) =>
         Effect.succeed({
           cwd: target.kind === "ssh" ? cwd ?? target.sync.localPath : cwd,
           terminalEnv:
@@ -222,7 +222,11 @@ describe("ProviderCommandReactor", () => {
               : undefined,
           providerOptions:
             target.kind === "ssh"
-              ? buildRemoteCodexProviderOptions({ stateDir, target })
+              ? buildRemoteProviderOptions({
+                  stateDir,
+                  provider: provider ?? "codex",
+                  target,
+                })
               : undefined,
           syncState: {
             key: target.kind === "ssh" ? `t3-session:${target.host}` : "workspace-local",
@@ -402,6 +406,67 @@ describe("ProviderCommandReactor", () => {
     };
     expect(providerOptions.providerOptions?.codex?.shellPath).toBeDefined();
     expect(fs.existsSync(providerOptions.providerOptions?.codex?.shellPath ?? "")).toBe(true);
+  });
+
+  it("passes SSH shell overrides to claudeCode sessions too", async () => {
+    const harness = await createHarness({
+      executionTarget: {
+        kind: "ssh",
+        label: "GPU box",
+        host: "gpu-1.internal",
+        username: "ubuntu",
+        port: 2222,
+        remotePath: "/srv/projects/provider-project",
+        sync: {
+          mode: "mutagen",
+          localPath: "/var/t3/mirrors/provider-project",
+          ignores: ["node_modules", ".next"],
+        },
+      },
+    });
+    const now = new Date().toISOString();
+
+    await Effect.runPromise(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.makeUnsafe("cmd-turn-start-remote-claude"),
+        threadId: ThreadId.makeUnsafe("thread-1"),
+        provider: "claudeCode",
+        message: {
+          messageId: asMessageId("user-message-remote-claude"),
+          role: "user",
+          text: "run claude on the pinned remote target",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: now,
+      }),
+    );
+
+    await waitFor(() => harness.startSession.mock.calls.length === 1);
+
+    expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
+      provider: "claudeCode",
+      cwd: "/var/t3/mirrors/provider-project",
+      providerOptions: {
+        claudeCode: {
+          shellEnvironment: {
+            T3_REMOTE_HOST: "gpu-1.internal",
+            T3_REMOTE_PORT: "2222",
+            T3_REMOTE_USER: "ubuntu",
+            T3_REMOTE_PATH: "/srv/projects/provider-project",
+            T3_LOCAL_PATH: "/var/t3/mirrors/provider-project",
+          },
+        },
+      },
+    });
+
+    const providerOptions = harness.startSession.mock.calls[0]?.[1] as {
+      providerOptions?: { claudeCode?: { shellPath?: string } };
+    };
+    expect(providerOptions.providerOptions?.claudeCode?.shellPath).toBeDefined();
+    expect(fs.existsSync(providerOptions.providerOptions?.claudeCode?.shellPath ?? "")).toBe(true);
   });
 
   it("forwards codex model options through session start and turn send", async () => {

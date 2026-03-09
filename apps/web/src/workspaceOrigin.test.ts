@@ -61,6 +61,7 @@ describe("workspaceOrigin", () => {
         enableAssistantStreaming: false,
         codexServiceTier: "auto",
         customCodexModels: [],
+        customClaudeCodeModels: [],
         activeWorkspaceId: "remote-1",
         workspaces: [
           {

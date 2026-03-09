@@ -4,7 +4,7 @@ import path from "node:path";
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { buildRemoteCodexProviderOptions, ensureRemoteShellScript } from "./remoteExecution.ts";
+import { buildRemoteProviderOptions, ensureRemoteShellScript } from "./remoteExecution.ts";
 
 describe("remoteExecution", () => {
   const createdDirs: string[] = [];
@@ -30,8 +30,9 @@ describe("remoteExecution", () => {
     const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-remote-execution-"));
     createdDirs.push(stateDir);
 
-    const providerOptions = buildRemoteCodexProviderOptions({
+    const providerOptions = buildRemoteProviderOptions({
       stateDir,
+      provider: "codex",
       target: {
         kind: "ssh",
         label: "GPU box",
@@ -61,5 +62,42 @@ describe("remoteExecution", () => {
     });
     expect(providerOptions?.codex?.shellPath).toBeDefined();
     expect(fs.existsSync(providerOptions?.codex?.shellPath ?? "")).toBe(true);
+  });
+
+  it("builds claude provider options for ssh execution targets", () => {
+    const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), "t3code-remote-execution-"));
+    createdDirs.push(stateDir);
+
+    const providerOptions = buildRemoteProviderOptions({
+      stateDir,
+      provider: "claudeCode",
+      target: {
+        kind: "ssh",
+        label: "GPU box",
+        host: "gpu-1.internal",
+        username: "ubuntu",
+        port: 2222,
+        remotePath: "/srv/projects/provider-project",
+        sync: {
+          mode: "mutagen",
+          localPath: "/var/t3/mirrors/provider-project",
+          ignores: ["node_modules", ".next"],
+        },
+      },
+    });
+
+    expect(providerOptions).toMatchObject({
+      claudeCode: {
+        shellEnvironment: {
+          T3_REMOTE_HOST: "gpu-1.internal",
+          T3_REMOTE_PORT: "2222",
+          T3_REMOTE_USER: "ubuntu",
+          T3_REMOTE_PATH: "/srv/projects/provider-project",
+          T3_LOCAL_PATH: "/var/t3/mirrors/provider-project",
+        },
+      },
+    });
+    expect(providerOptions?.claudeCode?.shellPath).toBeDefined();
+    expect(fs.existsSync(providerOptions?.claudeCode?.shellPath ?? "")).toBe(true);
   });
 });

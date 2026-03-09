@@ -2,7 +2,11 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
-import type { ProjectExecutionTarget, ProviderSessionStartInput } from "@t3tools/contracts";
+import type {
+  ProjectExecutionTarget,
+  ProviderKind,
+  ProviderSessionStartInput,
+} from "@t3tools/contracts";
 
 const REMOTE_EXECUTION_DIR = "remote-execution";
 const REMOTE_SHELL_SCRIPT_NAME = "t3-remote-shell.sh";
@@ -76,8 +80,9 @@ export function buildRemoteTerminalEnvironment(input: {
   };
 }
 
-export function buildRemoteCodexProviderOptions(input: {
+export function buildRemoteProviderOptions(input: {
   readonly stateDir: string;
+  readonly provider: ProviderKind;
   readonly target: ProjectExecutionTarget;
 }): ProviderSessionStartInput["providerOptions"] | undefined {
   if (input.target.kind !== "ssh") {
@@ -89,6 +94,15 @@ export function buildRemoteCodexProviderOptions(input: {
     stateDir: input.stateDir,
     target: input.target,
   });
+
+  if (input.provider === "claudeCode") {
+    return {
+      claudeCode: {
+        shellPath: scriptPath,
+        shellEnvironment,
+      },
+    };
+  }
 
   return {
     codex: {
