@@ -21,6 +21,9 @@
     }
   },
   "type": "module",
+  "overrides": {
+    "effect": "https://pkg.pr.new/Effect-TS/effect-smol/effect@8881a9b"
+  },
   "scripts": {
     "dev": "node scripts/dev-runner.ts dev",
     "dev:server": "node scripts/dev-runner.ts dev:server",

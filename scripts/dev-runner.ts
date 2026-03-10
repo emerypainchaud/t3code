@@ -545,7 +545,7 @@ const cliRuntimeLayer = Layer.mergeAll(
 const runtimeProgram = Command.run(devRunnerCli, { version: "0.0.0" }).pipe(
   Effect.scoped,
   Effect.provide(cliRuntimeLayer),
-);
+) as Effect.Effect<void, unknown, never>;
 
 if (import.meta.main) {
   NodeRuntime.runMain(runtimeProgram);

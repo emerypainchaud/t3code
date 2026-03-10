@@ -776,8 +776,9 @@ const buildDesktopArtifactCli = Command.make("build-desktop-artifact", {
 
 const cliRuntimeLayer = Layer.mergeAll(Logger.layer([Logger.consolePretty()]), NodeServices.layer);
 
-Command.run(buildDesktopArtifactCli, { version: "0.0.0" }).pipe(
+const runtimeProgram = Command.run(buildDesktopArtifactCli, { version: "0.0.0" }).pipe(
   Effect.scoped,
   Effect.provide(cliRuntimeLayer),
-  NodeRuntime.runMain,
-);
+) as Effect.Effect<void, unknown, never>;
+
+NodeRuntime.runMain(runtimeProgram);

@@ -259,8 +259,9 @@ const cli = Command.make("cli").pipe(
   Command.withSubcommands([buildCmd, publishCmd]),
 );
 
-Command.run(cli, { version: "0.0.0" }).pipe(
+const runtimeProgram = Command.run(cli, { version: "0.0.0" }).pipe(
   Effect.scoped,
   Effect.provide([Logger.layer([Logger.consolePretty()]), NodeServices.layer]),
-  NodeRuntime.runMain,
-);
+) as Effect.Effect<void, unknown, never>;
+
+NodeRuntime.runMain(runtimeProgram);
