@@ -211,6 +211,46 @@ it.effect("accepts provider-scoped model options in thread.turn.start", () =>
   }),
 );
 
+it.effect("accepts Claude provider start options in thread.turn.start", () =>
+  Effect.gen(function* () {
+    const parsed = yield* decodeThreadTurnStartCommand({
+      type: "thread.turn.start",
+      commandId: "cmd-turn-claude-options",
+      threadId: "thread-1",
+      message: {
+        messageId: "msg-claude-options",
+        role: "user",
+        text: "hello",
+        attachments: [],
+      },
+      provider: "claudeCode",
+      providerOptions: {
+        claudeCode: {
+          binaryPath: "/usr/local/bin/claude",
+          permissionMode: "plan",
+          maxThinkingTokens: 2048,
+          shellPath: "/tmp/t3-remote-shell.sh",
+          shellEnvironment: {
+            FOO: "bar",
+          },
+        },
+      },
+      createdAt: "2026-01-01T00:00:00.000Z",
+    });
+    assert.strictEqual(parsed.provider, "claudeCode");
+    assert.strictEqual(parsed.providerOptions?.claudeCode?.binaryPath, "/usr/local/bin/claude");
+    assert.strictEqual(parsed.providerOptions?.claudeCode?.permissionMode, "plan");
+    assert.strictEqual(parsed.providerOptions?.claudeCode?.maxThinkingTokens, 2048);
+    assert.strictEqual(
+      parsed.providerOptions?.claudeCode?.shellPath,
+      "/tmp/t3-remote-shell.sh",
+    );
+    assert.deepStrictEqual(parsed.providerOptions?.claudeCode?.shellEnvironment, {
+      FOO: "bar",
+    });
+  }),
+);
+
 it.effect(
   "decodes thread.turn-start-requested defaults for provider, runtime mode, and interaction mode",
   () =>

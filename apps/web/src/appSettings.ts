@@ -61,32 +61,51 @@ type SavedWorkspace = typeof SavedWorkspaceSchema.Type;
 
 const AppSettingsSchema = Schema.Struct({
   codexBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withDecodingDefault(() => ""),
+    Schema.withConstructorDefault(() => Option.some("")),
+  ),
+  claudeBinaryPath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withDecodingDefault(() => ""),
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
+    Schema.withDecodingDefault(() => ""),
     Schema.withConstructorDefault(() => Option.some("")),
   ),
   defaultThreadEnvMode: Schema.Literals(["local", "worktree"]).pipe(
-    Schema.withConstructorDefault(() => Option.some("local")),
+    Schema.withDecodingDefault(() => "local"),
+    Schema.withConstructorDefault(() => Option.some("local" as const)),
   ),
-  confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
+  confirmThreadDelete: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(() => true),
+    Schema.withConstructorDefault(() => Option.some(true)),
+  ),
   enableAssistantStreaming: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(() => false),
     Schema.withConstructorDefault(() => Option.some(false)),
   ),
   timestampFormat: Schema.Literals(["locale", "12-hour", "24-hour"]).pipe(
+    Schema.withDecodingDefault(() => DEFAULT_TIMESTAMP_FORMAT),
     Schema.withConstructorDefault(() => Option.some(DEFAULT_TIMESTAMP_FORMAT)),
   ),
-  codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
+  codexServiceTier: AppServiceTierSchema.pipe(
+    Schema.withDecodingDefault(() => "auto"),
+    Schema.withConstructorDefault(() => Option.some("auto" as const)),
+  ),
   customCodexModels: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(() => []),
     Schema.withConstructorDefault(() => Option.some([])),
   ),
   customClaudeCodeModels: Schema.Array(Schema.String).pipe(
+    Schema.withDecodingDefault(() => []),
     Schema.withConstructorDefault(() => Option.some([])),
   ),
   activeWorkspaceId: WorkspaceIdSchema.pipe(
+    Schema.withDecodingDefault(() => LOCAL_WORKSPACE_ID),
     Schema.withConstructorDefault(() => Option.some(LOCAL_WORKSPACE_ID)),
   ),
   workspaces: Schema.Array(SavedWorkspaceSchema).pipe(
+    Schema.withDecodingDefault(() => []),
     Schema.withConstructorDefault(() => Option.some([])),
   ),
 });
@@ -269,6 +288,20 @@ let listeners: Array<() => void> = [];
 let cachedRawSettings: string | null | undefined;
 let cachedSnapshot: AppSettings = DEFAULT_APP_SETTINGS;
 
+function getDesktopPersistedSettingsRaw(): string | null | undefined {
+  if (typeof window === "undefined") {
+    return undefined;
+  }
+  return window.desktopBridge?.getPersistedAppSettings?.();
+}
+
+function getLocalStoragePersistedSettingsRaw(): string | null {
+  if (typeof window === "undefined" || !("localStorage" in window) || !window.localStorage) {
+    return null;
+  }
+  return window.localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
+}
+
 export function normalizeCustomModelSlugs(
   models: Iterable<string | null | undefined>,
   provider: ProviderKind = "codex",
@@ -424,11 +457,20 @@ function parsePersistedSettings(value: string | null): AppSettings {
 }
 
 export function getAppSettingsSnapshot(): AppSettings {
-  if (typeof window === "undefined" || !("localStorage" in window) || !window.localStorage) {
+  if (typeof window === "undefined") {
     return DEFAULT_APP_SETTINGS;
   }
 
-  const raw = window.localStorage.getItem(APP_SETTINGS_STORAGE_KEY);
+  const desktopRaw = getDesktopPersistedSettingsRaw();
+  const raw =
+    desktopRaw ??
+    (() => {
+      const localStorageRaw = getLocalStoragePersistedSettingsRaw();
+      if (desktopRaw === null && localStorageRaw && window.desktopBridge?.setPersistedAppSettings) {
+        void window.desktopBridge.setPersistedAppSettings(localStorageRaw);
+      }
+      return localStorageRaw;
+    })();
   if (raw === cachedRawSettings) {
     return cachedSnapshot;
   }
@@ -439,11 +481,19 @@ export function getAppSettingsSnapshot(): AppSettings {
 }
 
 function persistSettings(next: AppSettings): void {
-  if (typeof window === "undefined" || !("localStorage" in window) || !window.localStorage) return;
+  if (typeof window === "undefined") return;
 
   const raw = JSON.stringify(next);
   try {
-    if (raw !== cachedRawSettings) {
+    if (window.desktopBridge?.setPersistedAppSettings) {
+      if (raw !== cachedRawSettings) {
+        void window.desktopBridge.setPersistedAppSettings(raw);
+      }
+    } else if (
+      "localStorage" in window &&
+      window.localStorage &&
+      raw !== cachedRawSettings
+    ) {
       window.localStorage.setItem(APP_SETTINGS_STORAGE_KEY, raw);
     }
   } catch {
@@ -457,14 +507,30 @@ function persistSettings(next: AppSettings): void {
 function subscribe(listener: () => void): () => void {
   listeners.push(listener);
 
-  if (typeof window === "undefined" || typeof window.addEventListener !== "function") {
+  if (typeof window === "undefined") {
     return () => {
       listeners = listeners.filter((entry) => entry !== listener);
     };
   }
 
+  const bridgeUnsubscribe = window.desktopBridge?.onPersistedAppSettings?.((raw) => {
+    if (raw === cachedRawSettings) {
+      return;
+    }
+    cachedRawSettings = raw;
+    cachedSnapshot = parsePersistedSettings(raw);
+    emitChange();
+  });
+
+  if (typeof window.addEventListener !== "function") {
+    return () => {
+      listeners = listeners.filter((entry) => entry !== listener);
+      bridgeUnsubscribe?.();
+    };
+  }
+
   const onStorage = (event: StorageEvent) => {
-    if (event.key === APP_SETTINGS_STORAGE_KEY) {
+    if (event.key === APP_SETTINGS_STORAGE_KEY && !window.desktopBridge?.getPersistedAppSettings) {
       emitChange();
     }
   };
@@ -472,6 +538,7 @@ function subscribe(listener: () => void): () => void {
   window.addEventListener("storage", onStorage);
   return () => {
     listeners = listeners.filter((entry) => entry !== listener);
+    bridgeUnsubscribe?.();
     window.removeEventListener("storage", onStorage);
   };
 }

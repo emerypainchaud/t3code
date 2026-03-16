@@ -116,6 +116,7 @@ describe("workspace settings", () => {
   it("exposes the implicit local workspace and resolves the active remote workspace", () => {
     const settings = {
       codexBinaryPath: "",
+      claudeBinaryPath: "",
       codexHomePath: "",
       defaultThreadEnvMode: "local" as const,
       confirmThreadDelete: true,

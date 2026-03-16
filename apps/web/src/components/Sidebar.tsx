@@ -11,7 +11,14 @@ import {
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   DEFAULT_RUNTIME_MODE,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -93,6 +100,10 @@ import { resolveProjectExecutionRoot } from "../projectExecutionPath";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
+const WORKSPACE_SWIPE_COOLDOWN_MS = 120;
+const WORKSPACE_POINTER_SWIPE_THRESHOLD_PX = 52;
+const WORKSPACE_WHEEL_RESET_MS = 120;
+const WORKSPACE_WHEEL_SWIPE_THRESHOLD_PX = 18;
 
 async function copyTextToClipboard(text: string): Promise<void> {
   if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
@@ -349,78 +360,12 @@ function WorkspacePager(props: {
   readonly onChange: (workspaceId: string) => void;
   readonly onOpenWorkspaceSettings: () => void;
 }) {
-  const activeWorkspaceIndex = Math.max(
-    0,
-    props.workspaceIdsAndNames.findIndex((workspace) => workspace.id === props.activeWorkspaceId),
-  );
-  const pointerStartXRef = useRef<number | null>(null);
-  const swipeHandledRef = useRef(false);
-  const lastGestureAtRef = useRef(0);
-
-  const switchByOffset = useCallback(
-    (offset: number) => {
-      if (props.workspaceIdsAndNames.length <= 1 || offset === 0) {
-        return;
-      }
-
-      const nextIndex =
-        (activeWorkspaceIndex + offset + props.workspaceIdsAndNames.length) %
-        props.workspaceIdsAndNames.length;
-      const nextWorkspace = props.workspaceIdsAndNames[nextIndex];
-      if (nextWorkspace && nextWorkspace.id !== props.activeWorkspaceId) {
-        props.onChange(nextWorkspace.id);
-      }
-    },
-    [activeWorkspaceIndex, props],
-  );
-
-  const handleGesture = useCallback(
-    (deltaX: number) => {
-      const now = Date.now();
-      if (now - lastGestureAtRef.current < 180 || Math.abs(deltaX) < 36) {
-        return false;
-      }
-
-      lastGestureAtRef.current = now;
-      switchByOffset(deltaX < 0 ? 1 : -1);
-      return true;
-    },
-    [switchByOffset],
-  );
-
   return (
-    <div className="drag-region-disabled flex items-center gap-3">
+    <div className="drag-region-disabled flex items-center gap-2">
       <div
-        className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-full border border-border/70 bg-background/60 px-3 py-2"
-        onPointerDown={(event) => {
-          pointerStartXRef.current = event.clientX;
-          swipeHandledRef.current = false;
-        }}
-        onPointerMove={(event) => {
-          if (pointerStartXRef.current === null || swipeHandledRef.current) {
-            return;
-          }
-
-          if (handleGesture(event.clientX - pointerStartXRef.current)) {
-            swipeHandledRef.current = true;
-          }
-        }}
-        onPointerUp={() => {
-          pointerStartXRef.current = null;
-          swipeHandledRef.current = false;
-        }}
-        onPointerCancel={() => {
-          pointerStartXRef.current = null;
-          swipeHandledRef.current = false;
-        }}
-        onWheel={(event) => {
-          if (Math.abs(event.deltaX) <= Math.abs(event.deltaY) || Math.abs(event.deltaX) < 14) {
-            return;
-          }
-
-          event.preventDefault();
-          handleGesture(event.deltaX);
-        }}
+        className="flex min-w-0 flex-1 items-center justify-center gap-0.5 px-0.5 py-0.5"
+        role="listbox"
+        aria-label="Workspace switcher"
       >
         {props.workspaceIdsAndNames.map((workspace) => {
           const isActive = workspace.id === props.activeWorkspaceId;
@@ -428,22 +373,29 @@ function WorkspacePager(props: {
             <button
               key={workspace.id}
               type="button"
+              role="option"
+              aria-selected={isActive}
               aria-label={`Switch to ${workspace.name}`}
               aria-pressed={isActive}
-              className={`rounded-full transition-all ${
-                isActive
-                  ? "h-2.5 w-2.5 bg-foreground/80 shadow-[0_0_0_2px_color-mix(in_oklab,var(--color-background)_55%,transparent)]"
-                  : "h-2 w-2 bg-muted-foreground/28 hover:bg-muted-foreground/46"
-              }`}
+              title={workspace.name}
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-accent/55"
               onClick={() => props.onChange(workspace.id)}
-            />
+            >
+              <span
+                className={`rounded-full transition-all ${
+                  isActive
+                    ? "h-3 w-3 bg-foreground/85 shadow-[0_0_0_2px_color-mix(in_oklab,var(--color-background)_55%,transparent)]"
+                    : "h-2.5 w-2.5 bg-muted-foreground/28 hover:bg-muted-foreground/46"
+                }`}
+              />
+            </button>
           );
         })}
       </div>
       <button
         type="button"
         aria-label="Add or manage workspaces"
-        className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border/70 bg-background/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent/55 hover:text-foreground"
         onClick={props.onOpenWorkspaceSettings}
       >
         <PlusIcon className="size-4" />
@@ -479,6 +431,14 @@ export default function Sidebar() {
     () => workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name })),
     [workspaces],
   );
+  const workspaceSwipeStartXRef = useRef<number | null>(null);
+  const workspaceSwipeHandledRef = useRef(false);
+  const workspaceLastGestureAtRef = useRef(0);
+  const workspaceWheelDeltaRef = useRef(0);
+  const workspaceWheelVerticalDeltaRef = useRef(0);
+  const workspaceWheelHandledRef = useRef(false);
+  const workspaceWheelResetTimeoutRef = useRef<number | null>(null);
+  const sidebarGestureRef = useRef<HTMLDivElement | null>(null);
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
@@ -1141,6 +1101,144 @@ export default function Sidebar() {
       shortcutLabelForCommand(keybindings, "chat.new"),
     [keybindings],
   );
+  const activeWorkspaceIndex = useMemo(
+    () => Math.max(0, workspaceOptions.findIndex((workspace) => workspace.id === activeWorkspace.id)),
+    [activeWorkspace.id, workspaceOptions],
+  );
+  const switchWorkspaceByOffset = useCallback(
+    (offset: number) => {
+      if (workspaceOptions.length <= 1 || offset === 0) {
+        return;
+      }
+      const nextIndex = Math.min(
+        workspaceOptions.length - 1,
+        Math.max(0, activeWorkspaceIndex + offset),
+      );
+      const nextWorkspace = workspaceOptions[nextIndex];
+      if (nextWorkspace && nextWorkspace.id !== activeWorkspace.id) {
+        updateSettings({ activeWorkspaceId: nextWorkspace.id });
+      }
+    },
+    [activeWorkspace.id, activeWorkspaceIndex, updateSettings, workspaceOptions],
+  );
+  const handleWorkspaceSwipeDelta = useCallback(
+    (deltaX: number) => {
+      const now = Date.now();
+      if (
+        workspaceOptions.length <= 1 ||
+        now - workspaceLastGestureAtRef.current < WORKSPACE_SWIPE_COOLDOWN_MS
+      ) {
+        return false;
+      }
+
+      if (Math.abs(deltaX) < WORKSPACE_POINTER_SWIPE_THRESHOLD_PX) {
+        return false;
+      }
+
+      workspaceLastGestureAtRef.current = now;
+      switchWorkspaceByOffset(deltaX < 0 ? -1 : 1);
+      return true;
+    },
+    [switchWorkspaceByOffset, workspaceOptions.length],
+  );
+  const sidebarWorkspaceSwipeHandlers = useMemo(
+    () => ({
+      onPointerDownCapture: (event: ReactPointerEvent<HTMLElement>) => {
+        workspaceSwipeStartXRef.current = event.clientX;
+        workspaceSwipeHandledRef.current = false;
+      },
+      onPointerMoveCapture: (event: ReactPointerEvent<HTMLElement>) => {
+        if (workspaceSwipeStartXRef.current === null || workspaceSwipeHandledRef.current) {
+          return;
+        }
+        if (handleWorkspaceSwipeDelta(event.clientX - workspaceSwipeStartXRef.current)) {
+          workspaceSwipeHandledRef.current = true;
+        }
+      },
+      onPointerUpCapture: () => {
+        workspaceSwipeStartXRef.current = null;
+        workspaceSwipeHandledRef.current = false;
+      },
+      onPointerCancelCapture: () => {
+        workspaceSwipeStartXRef.current = null;
+        workspaceSwipeHandledRef.current = false;
+      },
+    }),
+    [handleWorkspaceSwipeDelta],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (workspaceWheelResetTimeoutRef.current !== null) {
+        window.clearTimeout(workspaceWheelResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const sidebarGestureElement = sidebarGestureRef.current;
+    if (!sidebarGestureElement) {
+      return;
+    }
+
+    const wheelListenerOptions: AddEventListenerOptions = {
+      capture: true,
+      passive: false,
+    };
+
+    const resetWheelGesture = () => {
+      workspaceWheelDeltaRef.current = 0;
+      workspaceWheelVerticalDeltaRef.current = 0;
+      workspaceWheelHandledRef.current = false;
+      workspaceWheelResetTimeoutRef.current = null;
+    };
+
+    const handleWheelGesture = (event: WheelEvent) => {
+      if (workspaceOptions.length <= 1 || Math.abs(event.deltaX) < 1) {
+        return;
+      }
+
+      if (workspaceWheelResetTimeoutRef.current !== null) {
+        window.clearTimeout(workspaceWheelResetTimeoutRef.current);
+      }
+      workspaceWheelResetTimeoutRef.current = window.setTimeout(
+        resetWheelGesture,
+        WORKSPACE_WHEEL_RESET_MS,
+      );
+      workspaceWheelDeltaRef.current += event.deltaX;
+      workspaceWheelVerticalDeltaRef.current += event.deltaY;
+
+      if (workspaceWheelHandledRef.current) {
+        event.preventDefault();
+        return;
+      }
+
+      const absoluteHorizontalDelta = Math.abs(workspaceWheelDeltaRef.current);
+      const absoluteVerticalDelta = Math.abs(workspaceWheelVerticalDeltaRef.current);
+      if (absoluteHorizontalDelta < WORKSPACE_WHEEL_SWIPE_THRESHOLD_PX) {
+        return;
+      }
+      if (absoluteVerticalDelta > 0 && absoluteHorizontalDelta < absoluteVerticalDelta * 0.7) {
+        return;
+      }
+
+      if (!handleWorkspaceSwipeDelta(workspaceWheelDeltaRef.current)) {
+        return;
+      }
+
+      workspaceWheelHandledRef.current = true;
+      event.preventDefault();
+    };
+
+    sidebarGestureElement.addEventListener("wheel", handleWheelGesture, wheelListenerOptions);
+    return () => {
+      sidebarGestureElement.removeEventListener("wheel", handleWheelGesture, wheelListenerOptions);
+      if (workspaceWheelResetTimeoutRef.current !== null) {
+        window.clearTimeout(workspaceWheelResetTimeoutRef.current);
+      }
+      resetWheelGesture();
+    };
+  }, [handleWorkspaceSwipeDelta, workspaceOptions.length]);
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -1234,10 +1332,16 @@ export default function Sidebar() {
   );
 
   return (
-    <>
-      {isElectron ? (
-        <>
-          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[82px]">
+    <div
+      ref={sidebarGestureRef}
+      className="flex h-full min-h-0 w-full flex-col"
+      {...sidebarWorkspaceSwipeHandlers}
+    >
+      <SidebarHeader
+        className={isElectron ? "drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[82px]" : "gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3"}
+      >
+        {isElectron ? (
+          <>
             <div className="flex min-w-0 flex-1 items-center gap-3">
               {wordmark}
               <ActiveWorkspaceBadge
@@ -1264,10 +1368,8 @@ export default function Sidebar() {
                 <TooltipPopup side="bottom">{desktopUpdateTooltip}</TooltipPopup>
               </Tooltip>
             )}
-          </SidebarHeader>
-        </>
-      ) : (
-        <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
+          </>
+        ) : (
           <div className="flex flex-col gap-2">
             {wordmark}
             <WorkspaceSwitcher
@@ -1277,8 +1379,8 @@ export default function Sidebar() {
               onChange={(workspaceId) => updateSettings({ activeWorkspaceId: workspaceId })}
             />
           </div>
-        </SidebarHeader>
-      )}
+        )}
+      </SidebarHeader>
 
       <SidebarContent className="gap-0">
         {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
@@ -1832,6 +1934,6 @@ export default function Sidebar() {
           </SidebarMenu>
         )}
       </SidebarFooter>
-    </>
+    </div>
   );
 }

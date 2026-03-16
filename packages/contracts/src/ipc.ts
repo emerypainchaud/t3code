@@ -146,6 +146,9 @@ export interface DesktopDeployRemoteWorkspaceResult {
 
 export interface DesktopBridge {
   getWsUrl: () => string | null;
+  getPersistedAppSettings: () => string | null;
+  setPersistedAppSettings: (raw: string) => Promise<void>;
+  onPersistedAppSettings: (listener: (raw: string | null) => void) => () => void;
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;

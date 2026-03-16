@@ -48,6 +48,10 @@ import {
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
 import { createRemoteTlsTrustController } from "./remoteTlsTrust";
 import { createRemoteWorkspaceDeploymentController } from "./remoteWorkspaceDeployment";
+import {
+  readPersistedAppSettingsRaw,
+  writePersistedAppSettingsRaw,
+} from "./appSettingsPersistence";
 
 fixPath();
 
@@ -63,6 +67,9 @@ const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:inspect-remote-tls-certificate";
 const TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:trust-remote-tls-certificate";
 const DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL = "desktop:deploy-remote-workspace-server";
+const APP_SETTINGS_GET_CHANNEL = "desktop:app-settings-get";
+const APP_SETTINGS_SET_CHANNEL = "desktop:app-settings-set";
+const APP_SETTINGS_CHANGED_CHANNEL = "desktop:app-settings-changed";
 const STATE_DIR =
   process.env.T3CODE_STATE_DIR?.trim() || Path.join(OS.homedir(), ".t3", "userdata");
 const DESKTOP_SCHEME = "t3";
@@ -109,6 +116,7 @@ let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
+let persistedAppSettingsRaw: string | null | undefined;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
@@ -681,6 +689,28 @@ function configureAppIdentity(): void {
   }
 }
 
+function loadPersistedAppSettingsRaw(): string | null {
+  if (persistedAppSettingsRaw !== undefined) {
+    return persistedAppSettingsRaw;
+  }
+  persistedAppSettingsRaw = readPersistedAppSettingsRaw(app.getPath("userData"));
+  return persistedAppSettingsRaw;
+}
+
+function broadcastPersistedAppSettings(raw: string | null): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) {
+      continue;
+    }
+    window.webContents.send(APP_SETTINGS_CHANGED_CHANNEL, raw);
+  }
+}
+
+function persistAppSettingsRaw(raw: string | null): string | null {
+  persistedAppSettingsRaw = writePersistedAppSettingsRaw(app.getPath("userData"), raw);
+  return persistedAppSettingsRaw;
+}
+
 function clearUpdatePollTimer(): void {
   if (updateStartupTimer) {
     clearTimeout(updateStartupTimer);
@@ -1039,6 +1069,20 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.removeAllListeners(APP_SETTINGS_GET_CHANNEL);
+  ipcMain.on(APP_SETTINGS_GET_CHANNEL, (event) => {
+    event.returnValue = loadPersistedAppSettingsRaw();
+  });
+
+  ipcMain.removeHandler(APP_SETTINGS_SET_CHANNEL);
+  ipcMain.handle(APP_SETTINGS_SET_CHANNEL, async (_event, raw: unknown) => {
+    if (typeof raw !== "string") {
+      throw new Error("Desktop app settings payload must be a string.");
+    }
+    const nextRaw = persistAppSettingsRaw(raw);
+    broadcastPersistedAppSettings(nextRaw);
+  });
+
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
   ipcMain.handle(PICK_FOLDER_CHANNEL, async () => {
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;

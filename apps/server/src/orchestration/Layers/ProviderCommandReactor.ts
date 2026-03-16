@@ -45,6 +45,114 @@ function toNonEmptyProviderInput(value: string | undefined): string | undefined 
   return normalized && normalized.length > 0 ? normalized : undefined;
 }
 
+function mergeProviderStartOptions(
+  localOptions?: ProviderStartOptions,
+  launchOptions?: ProviderStartOptions,
+): ProviderStartOptions | undefined {
+  if (localOptions === undefined && launchOptions === undefined) {
+    return undefined;
+  }
+
+  const codexOptions =
+    localOptions?.codex !== undefined || launchOptions?.codex !== undefined
+      ? {
+          ...localOptions?.codex,
+          ...launchOptions?.codex,
+        }
+      : undefined;
+  const claudeCodeOptions =
+    localOptions?.claudeCode !== undefined || launchOptions?.claudeCode !== undefined
+      ? {
+          ...localOptions?.claudeCode,
+          ...launchOptions?.claudeCode,
+        }
+      : undefined;
+
+  return {
+    ...localOptions,
+    ...launchOptions,
+    ...(codexOptions !== undefined ? { codex: codexOptions } : {}),
+    ...(claudeCodeOptions !== undefined ? { claudeCode: claudeCodeOptions } : {}),
+  };
+}
+
+function readRequestIdFromActivityPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const requestId = (payload as Record<string, unknown>).requestId;
+  return typeof requestId === "string" && requestId.trim().length > 0 ? requestId : null;
+}
+
+function readQuestionsFromActivityPayload(payload: unknown): ReadonlyArray<{
+  readonly id: string;
+  readonly header: string;
+}> {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return [];
+  }
+  const questions = (payload as Record<string, unknown>).questions;
+  if (!Array.isArray(questions)) {
+    return [];
+  }
+  return questions.flatMap((question) => {
+    if (!question || typeof question !== "object" || Array.isArray(question)) {
+      return [];
+    }
+    const record = question as Record<string, unknown>;
+    return typeof record.id === "string" && typeof record.header === "string"
+      ? [{ id: record.id, header: record.header }]
+      : [];
+  });
+}
+
+function stringifyStructuredAnswer(answer: unknown): string {
+  if (typeof answer === "string") {
+    return answer;
+  }
+  if (typeof answer === "number" || typeof answer === "boolean") {
+    return String(answer);
+  }
+  if (Array.isArray(answer)) {
+    return answer.map((entry) => stringifyStructuredAnswer(entry)).join(", ");
+  }
+  try {
+    return JSON.stringify(answer);
+  } catch {
+    return String(answer);
+  }
+}
+
+function buildClaudeUserInputFollowUp(input: {
+  readonly requestId: string;
+  readonly questions: ReadonlyArray<{
+    readonly id: string;
+    readonly header: string;
+  }>;
+  readonly answers: Record<string, unknown>;
+}): string {
+  const lines = [`Continue using these user input answers for request ${input.requestId}:`];
+  const consumedIds = new Set<string>();
+
+  for (const question of input.questions) {
+    const answer = input.answers[question.id];
+    if (answer === undefined) {
+      continue;
+    }
+    consumedIds.add(question.id);
+    lines.push(`- ${question.header} (${question.id}): ${stringifyStructuredAnswer(answer)}`);
+  }
+
+  for (const [key, value] of Object.entries(input.answers)) {
+    if (consumedIds.has(key)) {
+      continue;
+    }
+    lines.push(`- ${key}: ${stringifyStructuredAnswer(value)}`);
+  }
+
+  return lines.join("\n");
+}
+
 function mapProviderSessionStatusToOrchestrationStatus(
   status: "connecting" | "ready" | "running" | "error" | "closed",
 ): OrchestrationSession["status"] {
@@ -239,23 +347,10 @@ const make = Effect.gen(function* () {
         Effect.map((sessions) => sessions.find((session) => session.threadId === threadId)),
       );
 
-    const providerOptions = (() => {
-      if (options?.providerOptions === undefined && launch.providerOptions === undefined) {
-        return undefined;
-      }
-      const codexOptions =
-        options?.providerOptions?.codex !== undefined || launch.providerOptions?.codex !== undefined
-          ? {
-              ...options?.providerOptions?.codex,
-              ...launch.providerOptions?.codex,
-            }
-          : undefined;
-      return {
-        ...options?.providerOptions,
-        ...launch.providerOptions,
-        ...(codexOptions !== undefined ? { codex: codexOptions } : {}),
-      };
-    })();
+    const providerOptions = mergeProviderStartOptions(
+      options?.providerOptions,
+      launch.providerOptions,
+    );
 
     const startProviderSession = (input?: {
       readonly resumeCursor?: unknown;
@@ -616,6 +711,67 @@ const make = Effect.gen(function* () {
         createdAt: event.payload.createdAt,
         requestId: event.payload.requestId,
       });
+    }
+
+    if (thread.session?.providerName === "claudeCode") {
+      const matchingRequest = [...thread.activities]
+        .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
+        .toReversed()
+        .find(
+          (activity) =>
+            activity.kind === "user-input.requested" &&
+            readRequestIdFromActivityPayload(activity.payload) === event.payload.requestId,
+        );
+      const followUpInput = buildClaudeUserInputFollowUp({
+        requestId: event.payload.requestId,
+        questions: matchingRequest
+          ? readQuestionsFromActivityPayload(matchingRequest.payload)
+          : [],
+        answers: event.payload.answers,
+      });
+
+      yield* sendTurnForThread({
+        threadId: event.payload.threadId,
+        messageText: followUpInput,
+        provider: "claudeCode",
+        createdAt: event.payload.createdAt,
+      }).pipe(
+        Effect.tap(() =>
+          orchestrationEngine.dispatch({
+            type: "thread.activity.append",
+            commandId: serverCommandId("claude-user-input-resolved"),
+            threadId: event.payload.threadId,
+            activity: {
+              id: EventId.makeUnsafe(crypto.randomUUID()),
+              tone: "info",
+              kind: "user-input.resolved",
+              summary: "User input submitted",
+              payload: {
+                requestId: event.payload.requestId,
+                answers: event.payload.answers,
+              },
+              turnId: null,
+              createdAt: event.payload.createdAt,
+            },
+            createdAt: event.payload.createdAt,
+          }),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            const error = Cause.squash(cause);
+            yield* appendProviderFailureActivity({
+              threadId: event.payload.threadId,
+              kind: "provider.user-input.respond.failed",
+              summary: "Provider user input response failed",
+              detail: toErrorMessage(error),
+              turnId: null,
+              createdAt: event.payload.createdAt,
+              requestId: event.payload.requestId,
+            });
+          }),
+        ),
+      );
+      return;
     }
 
     yield* providerService

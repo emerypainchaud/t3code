@@ -8,6 +8,7 @@ import {
   checkClaudeProviderStatus,
   checkCodexProviderStatus,
   parseAuthStatusFromOutput,
+  parseClaudeAuthStatusFromOutput,
 } from "./ProviderHealth";
 
 // ── Test helpers ────────────────────────────────────────────────────
@@ -187,18 +188,25 @@ it.effect("returns warning when login status command is unsupported", () =>
   ),
 );
 
-it.effect("returns ready when claude is installed", () =>
+it.effect("returns ready when claude is installed and authenticated", () =>
   Effect.gen(function* () {
     const status = yield* checkClaudeProviderStatus;
     assert.strictEqual(status.provider, "claudeCode");
     assert.strictEqual(status.status, "ready");
     assert.strictEqual(status.available, true);
-    assert.strictEqual(status.authStatus, "unknown");
+    assert.strictEqual(status.authStatus, "authenticated");
   }).pipe(
     Effect.provide(
       mockSpawnerLayer((args) => {
         const joined = args.join(" ");
         if (joined === "--version") return { stdout: "claude 1.0.0\n", stderr: "", code: 0 };
+        if (joined === "auth status --json") {
+          return {
+            stdout: '{"loggedIn":true,"authMethod":"claude.ai"}\n',
+            stderr: "",
+            code: 0,
+          };
+        }
         throw new Error(`Unexpected args: ${joined}`);
       }),
     ),
@@ -217,6 +225,56 @@ it.effect("returns unavailable when claude is missing", () =>
       "Claude Code CLI (`claude`) is not installed or not on PATH.",
     );
   }).pipe(Effect.provide(failingSpawnerLayer("spawn claude ENOENT"))),
+);
+
+it.effect("returns unauthenticated when Claude auth probe reports logged out", () =>
+  Effect.gen(function* () {
+    const status = yield* checkClaudeProviderStatus;
+    assert.strictEqual(status.provider, "claudeCode");
+    assert.strictEqual(status.status, "error");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "unauthenticated");
+    assert.strictEqual(
+      status.message,
+      "Claude Code CLI is not authenticated. Run `claude auth login` and try again.",
+    );
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") return { stdout: "claude 1.0.0\n", stderr: "", code: 0 };
+        if (joined === "auth status --json") {
+          return { stdout: '{"loggedIn":false}\n', stderr: "", code: 0 };
+        }
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
+    ),
+  ),
+);
+
+it.effect("returns warning when Claude auth probe command is unsupported", () =>
+  Effect.gen(function* () {
+    const status = yield* checkClaudeProviderStatus;
+    assert.strictEqual(status.provider, "claudeCode");
+    assert.strictEqual(status.status, "warning");
+    assert.strictEqual(status.available, true);
+    assert.strictEqual(status.authStatus, "unknown");
+    assert.strictEqual(
+      status.message,
+      "Claude Code CLI authentication status command is unavailable in this Claude Code version.",
+    );
+  }).pipe(
+    Effect.provide(
+      mockSpawnerLayer((args) => {
+        const joined = args.join(" ");
+        if (joined === "--version") return { stdout: "claude 1.0.0\n", stderr: "", code: 0 };
+        if (joined === "auth status --json") {
+          return { stdout: "", stderr: "error: unknown command 'auth'", code: 2 };
+        }
+        throw new Error(`Unexpected args: ${joined}`);
+      }),
+    ),
+  ),
 );
 
 // ── Pure function tests ─────────────────────────────────────────────
@@ -245,4 +303,14 @@ it("parseAuthStatusFromOutput: JSON without auth marker is warning", () => {
   });
   assert.strictEqual(parsed.status, "warning");
   assert.strictEqual(parsed.authStatus, "unknown");
+});
+
+it("parseClaudeAuthStatusFromOutput: JSON with loggedIn=false is unauthenticated", () => {
+  const parsed = parseClaudeAuthStatusFromOutput({
+    stdout: '{"loggedIn":false}\n',
+    stderr: "",
+    code: 0,
+  });
+  assert.strictEqual(parsed.status, "error");
+  assert.strictEqual(parsed.authStatus, "unauthenticated");
 });

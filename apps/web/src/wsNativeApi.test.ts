@@ -212,6 +212,7 @@ describe("wsNativeApi", () => {
       "t3code:app-settings:v1",
       JSON.stringify({
         codexBinaryPath: "",
+        claudeBinaryPath: "",
         codexHomePath: "",
         confirmThreadDelete: true,
         enableAssistantStreaming: false,

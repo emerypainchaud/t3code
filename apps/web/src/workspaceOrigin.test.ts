@@ -56,6 +56,7 @@ describe("workspaceOrigin", () => {
       }
       return JSON.stringify({
         codexBinaryPath: "",
+        claudeBinaryPath: "",
         codexHomePath: "",
         confirmThreadDelete: true,
         enableAssistantStreaming: false,

@@ -35,6 +35,12 @@ export interface CommandResult {
   readonly code: number;
 }
 
+interface ProviderAuthParserConfig {
+  readonly unavailableCommandMessage: string;
+  readonly unauthenticatedMessage: string;
+  readonly unknownStatusMessage: string;
+}
+
 function nonEmptyTrimmed(value: string | undefined): string | undefined {
   if (!value) return undefined;
   const trimmed = value.trim();
@@ -88,7 +94,10 @@ function extractAuthBoolean(value: unknown): boolean | undefined {
   return undefined;
 }
 
-export function parseAuthStatusFromOutput(result: CommandResult): {
+function parseProviderAuthStatusFromOutput(
+  result: CommandResult,
+  config: ProviderAuthParserConfig,
+): {
   readonly status: ServerProviderStatusState;
   readonly authStatus: ServerProviderAuthStatus;
   readonly message?: string;
@@ -103,7 +112,7 @@ export function parseAuthStatusFromOutput(result: CommandResult): {
     return {
       status: "warning",
       authStatus: "unknown",
-      message: "Codex CLI authentication status command is unavailable in this Codex version.",
+      message: config.unavailableCommandMessage,
     };
   }
 
@@ -117,7 +126,7 @@ export function parseAuthStatusFromOutput(result: CommandResult): {
     return {
       status: "error",
       authStatus: "unauthenticated",
-      message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+      message: config.unauthenticatedMessage,
     };
   }
 
@@ -143,15 +152,14 @@ export function parseAuthStatusFromOutput(result: CommandResult): {
     return {
       status: "error",
       authStatus: "unauthenticated",
-      message: "Codex CLI is not authenticated. Run `codex login` and try again.",
+      message: config.unauthenticatedMessage,
     };
   }
   if (parsedAuth.attemptedJsonParse) {
     return {
       status: "warning",
       authStatus: "unknown",
-      message:
-        "Could not verify Codex authentication status from JSON output (missing auth marker).",
+      message: `${config.unknownStatusMessage} from JSON output (missing auth marker).`,
     };
   }
   if (result.code === 0) {
@@ -163,9 +171,28 @@ export function parseAuthStatusFromOutput(result: CommandResult): {
     status: "warning",
     authStatus: "unknown",
     message: detail
-      ? `Could not verify Codex authentication status. ${detail}`
-      : "Could not verify Codex authentication status.",
+      ? `${config.unknownStatusMessage}. ${detail}`
+      : `${config.unknownStatusMessage}.`,
   };
+}
+
+export function parseAuthStatusFromOutput(result: CommandResult) {
+  return parseProviderAuthStatusFromOutput(result, {
+    unavailableCommandMessage:
+      "Codex CLI authentication status command is unavailable in this Codex version.",
+    unauthenticatedMessage: "Codex CLI is not authenticated. Run `codex login` and try again.",
+    unknownStatusMessage: "Could not verify Codex authentication status",
+  });
+}
+
+export function parseClaudeAuthStatusFromOutput(result: CommandResult) {
+  return parseProviderAuthStatusFromOutput(result, {
+    unavailableCommandMessage:
+      "Claude Code CLI authentication status command is unavailable in this Claude Code version.",
+    unauthenticatedMessage:
+      "Claude Code CLI is not authenticated. Run `claude auth login` and try again.",
+    unknownStatusMessage: "Could not verify Claude Code authentication status",
+  });
 }
 
 // ── Effect-native command execution ─────────────────────────────────
@@ -359,12 +386,46 @@ export const checkClaudeProviderStatus: Effect.Effect<
     };
   }
 
+  const authProbe = yield* runProviderCommand("claude", ["auth", "status", "--json"]).pipe(
+    Effect.timeoutOption(DEFAULT_TIMEOUT_MS),
+    Effect.result,
+  );
+
+  if (Result.isFailure(authProbe)) {
+    const error = authProbe.failure;
+    return {
+      provider: CLAUDE_PROVIDER,
+      status: "warning" as const,
+      available: true,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message:
+        error instanceof Error
+          ? `Could not verify Claude Code authentication status: ${error.message}.`
+          : "Could not verify Claude Code authentication status.",
+    };
+  }
+
+  if (Option.isNone(authProbe.success)) {
+    return {
+      provider: CLAUDE_PROVIDER,
+      status: "warning" as const,
+      available: true,
+      authStatus: "unknown" as const,
+      checkedAt,
+      message: "Could not verify Claude Code authentication status. Timed out while running command.",
+    };
+  }
+
+  const parsed = parseClaudeAuthStatusFromOutput(authProbe.success.value);
+
   return {
     provider: CLAUDE_PROVIDER,
-    status: "ready" as const,
+    status: parsed.status,
     available: true,
-    authStatus: "unknown" as const,
+    authStatus: parsed.authStatus,
     checkedAt,
+    ...(parsed.message ? { message: parsed.message } : {}),
   } satisfies ServerProviderStatus;
 });
 

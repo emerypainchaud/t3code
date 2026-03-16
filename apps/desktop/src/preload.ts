@@ -14,10 +14,19 @@ const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:inspect-remote-tls-certificate";
 const TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:trust-remote-tls-certificate";
 const DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL = "desktop:deploy-remote-workspace-server";
+const APP_SETTINGS_GET_CHANNEL = "desktop:app-settings-get";
+const APP_SETTINGS_SET_CHANNEL = "desktop:app-settings-set";
+const APP_SETTINGS_CHANGED_CHANNEL = "desktop:app-settings-changed";
 const wsUrl = process.env.T3CODE_DESKTOP_WS_URL ?? null;
+let persistedAppSettings = ipcRenderer.sendSync(APP_SETTINGS_GET_CHANNEL) as string | null;
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => wsUrl,
+  getPersistedAppSettings: () => persistedAppSettings,
+  setPersistedAppSettings: async (raw) => {
+    persistedAppSettings = raw;
+    await ipcRenderer.invoke(APP_SETTINGS_SET_CHANNEL, raw);
+  },
   pickFolder: () => ipcRenderer.invoke(PICK_FOLDER_CHANNEL),
   confirm: (message) => ipcRenderer.invoke(CONFIRM_CHANNEL, message),
   setTheme: (theme) => ipcRenderer.invoke(SET_THEME_CHANNEL, theme),
@@ -43,6 +52,18 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL, input),
   deployRemoteWorkspaceServer: (input) =>
     ipcRenderer.invoke(DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL, input),
+  onPersistedAppSettings: (listener) => {
+    const wrappedListener = (_event: Electron.IpcRendererEvent, raw: unknown) => {
+      if (raw !== null && typeof raw !== "string") return;
+      persistedAppSettings = raw;
+      listener(raw);
+    };
+
+    ipcRenderer.on(APP_SETTINGS_CHANGED_CHANNEL, wrappedListener);
+    return () => {
+      ipcRenderer.removeListener(APP_SETTINGS_CHANGED_CHANNEL, wrappedListener);
+    };
+  },
   onUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (typeof state !== "object" || state === null) return;
