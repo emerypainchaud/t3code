@@ -251,6 +251,7 @@ export function createWsNativeApi(): NativeApi {
       },
     },
     projects: {
+      listDirectory: (input) => ensureTransport().request(WS_METHODS.projectsListDirectory, input),
       searchEntries: (input) => ensureTransport().request(WS_METHODS.projectsSearchEntries, input),
       writeFile: (input) => ensureTransport().request(WS_METHODS.projectsWriteFile, input),
     },

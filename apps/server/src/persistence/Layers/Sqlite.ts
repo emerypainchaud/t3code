@@ -14,27 +14,27 @@ type Loader = {
 const dynamicImport = new Function("specifier", "return import(specifier)") as <T>(
   specifier: string,
 ) => Promise<T>;
-const bunSqliteClientSpecifiers = [
-  new URL("./persistence/BunSqliteClientLoader.mjs", import.meta.url).href,
-  new URL("../BunSqliteClientLoader.ts", import.meta.url).href,
-];
+const bunSqliteClientSpecifiers = [new URL("./persistence/BunSqliteClientLoader.mjs", import.meta.url).href];
 const nodeSqliteClientSpecifiers = [
+  new URL("../NodeSqliteClient.ts", import.meta.url).href,
   new URL("./NodeSqliteClient.mjs", import.meta.url).href,
   new URL("./persistence/NodeSqliteClient.mjs", import.meta.url).href,
-  new URL("../NodeSqliteClient.ts", import.meta.url).href,
 ];
 
 async function importBunSqliteClient(): Promise<Loader> {
-  for (const specifier of bunSqliteClientSpecifiers) {
-    try {
-      return await dynamicImport<Loader>(specifier);
-    } catch {
-      // The exact relative output path depends on whether we're running from
-      // tsdown's bundled dist or a source-adjacent development environment.
+  try {
+    return await import("../BunSqliteClientLoader.ts");
+  } catch {
+    for (const specifier of bunSqliteClientSpecifiers) {
+      try {
+        return await dynamicImport<Loader>(specifier);
+      } catch {
+        // The dist output path differs from the source-adjacent development path.
+      }
     }
-  }
 
-  throw new Error("Unable to locate BunSqliteClient runtime module.");
+    throw new Error("Unable to locate BunSqliteClient runtime module.");
+  }
 }
 
 async function importNodeSqliteClient(): Promise<Loader> {
@@ -42,8 +42,7 @@ async function importNodeSqliteClient(): Promise<Loader> {
     try {
       return await dynamicImport<Loader>(specifier);
     } catch {
-      // The exact relative output path depends on whether we're running from
-      // tsdown's bundled dist or a source-adjacent development environment.
+      // The dist output path differs from the source-adjacent development path.
     }
   }
 
@@ -55,7 +54,7 @@ const makeRuntimeSqliteLayer = (
 ): Layer.Layer<SqlClient.SqlClient> =>
   Effect.gen(function* () {
     const clientModule = yield* Effect.promise<Loader>(() => {
-      if (process.versions.bun !== undefined) {
+      if (typeof Bun !== "undefined") {
         return importBunSqliteClient();
       }
 

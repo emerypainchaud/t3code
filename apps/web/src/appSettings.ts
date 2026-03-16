@@ -39,11 +39,23 @@ const BUILT_IN_MODEL_SLUGS_BY_PROVIDER: Record<ProviderKind, ReadonlySet<string>
   claudeCode: new Set(getModelOptions("claudeCode").map((option) => option.slug)),
 };
 
+const SavedWorkspaceDeploymentSchema = Schema.Struct({
+  host: WorkspaceFieldSchema,
+  username: Schema.optional(WorkspaceFieldSchema),
+  port: Schema.optional(Schema.Number),
+  connectHost: Schema.optional(WorkspaceFieldSchema),
+  serverPort: Schema.optional(Schema.Number),
+  serviceName: Schema.optional(WorkspaceFieldSchema),
+  deployedVersion: Schema.optional(WorkspaceFieldSchema),
+});
+export type SavedWorkspaceDeployment = typeof SavedWorkspaceDeploymentSchema.Type;
+
 const SavedWorkspaceSchema = Schema.Struct({
   id: WorkspaceIdSchema,
   name: WorkspaceFieldSchema,
   wsUrl: WorkspaceFieldSchema,
   authToken: WorkspaceFieldSchema,
+  deployment: Schema.optional(SavedWorkspaceDeploymentSchema),
 });
 type SavedWorkspace = typeof SavedWorkspaceSchema.Type;
 
@@ -90,6 +102,7 @@ export interface AppWorkspace {
   wsUrl: string;
   authToken: string;
   isLocal: boolean;
+  deployment: SavedWorkspaceDeployment | null;
 }
 
 function normalizeWorkspaceName(input: string, normalizedUrl: string): string {
@@ -151,11 +164,43 @@ function normalizeSavedWorkspaces(workspaces: readonly SavedWorkspace[]): SavedW
     }
 
     seenIds.add(id);
+    const deploymentHost = workspace.deployment?.host?.trim() ?? "";
     normalized.push({
       id,
       name: normalizeWorkspaceName(workspace.name, wsUrl),
       wsUrl,
       authToken: workspace.authToken.trim(),
+      ...(deploymentHost
+        ? {
+            deployment: {
+              host: deploymentHost,
+              ...(workspace.deployment?.username?.trim()
+                ? { username: workspace.deployment.username.trim() }
+                : {}),
+              ...(typeof workspace.deployment?.port === "number" &&
+              Number.isInteger(workspace.deployment.port) &&
+              workspace.deployment.port > 0 &&
+              workspace.deployment.port <= 65535
+                ? { port: workspace.deployment.port }
+                : {}),
+              ...(workspace.deployment?.connectHost?.trim()
+                ? { connectHost: workspace.deployment.connectHost.trim() }
+                : {}),
+              ...(typeof workspace.deployment?.serverPort === "number" &&
+              Number.isInteger(workspace.deployment.serverPort) &&
+              workspace.deployment.serverPort > 0 &&
+              workspace.deployment.serverPort <= 65535
+                ? { serverPort: workspace.deployment.serverPort }
+                : {}),
+              ...(workspace.deployment?.serviceName?.trim()
+                ? { serviceName: workspace.deployment.serviceName.trim() }
+                : {}),
+              ...(workspace.deployment?.deployedVersion?.trim()
+                ? { deployedVersion: workspace.deployment.deployedVersion.trim() }
+                : {}),
+            },
+          }
+        : {}),
     });
 
     if (normalized.length >= MAX_WORKSPACE_COUNT) {
@@ -174,6 +219,7 @@ export function getAppWorkspaces(settings: AppSettings): AppWorkspace[] {
       wsUrl: "",
       authToken: "",
       isLocal: true,
+      deployment: null,
     },
     ...normalizeSavedWorkspaces(settings.workspaces).map((workspace) => ({
       id: workspace.id,
@@ -181,6 +227,7 @@ export function getAppWorkspaces(settings: AppSettings): AppWorkspace[] {
       wsUrl: workspace.wsUrl,
       authToken: workspace.authToken,
       isLocal: false as const,
+      deployment: workspace.deployment ?? null,
     })),
   ];
 }
@@ -195,6 +242,7 @@ export function resolveActiveWorkspace(settings: AppSettings): AppWorkspace {
       wsUrl: "",
       authToken: "",
       isLocal: true,
+      deployment: null,
     }
   );
 }

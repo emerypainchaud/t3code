@@ -1,8 +1,9 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   type DesktopDeployRemoteWorkspaceResult,
+  type DesktopUpdateState,
   type DesktopRemoteTlsCertificateInspection,
   type ProviderKind,
 } from "@t3tools/contracts";
@@ -162,6 +163,7 @@ function SettingsRouteView() {
   const [deployWorkspaceServerPortInput, setDeployWorkspaceServerPortInput] = useState("");
   const [deployWorkspaceNameInput, setDeployWorkspaceNameInput] = useState("");
   const [deployWorkspaceMessage, setDeployWorkspaceMessage] = useState<string | null>(null);
+  const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -184,6 +186,43 @@ function SettingsRouteView() {
     workspaceCertificate,
     normalizedWorkspaceUrl,
   );
+  const desktopCurrentVersion =
+    desktopUpdateState?.currentVersion?.trim() && desktopUpdateState.currentVersion.trim().length > 0
+      ? desktopUpdateState.currentVersion.trim()
+      : null;
+
+  useEffect(() => {
+    if (!isElectron) return;
+    const bridge = window.desktopBridge;
+    if (
+      !bridge ||
+      typeof bridge.getUpdateState !== "function" ||
+      typeof bridge.onUpdateState !== "function"
+    ) {
+      return;
+    }
+
+    let disposed = false;
+    let receivedSubscriptionUpdate = false;
+    const unsubscribe = bridge.onUpdateState((nextState) => {
+      if (disposed) return;
+      receivedSubscriptionUpdate = true;
+      setDesktopUpdateState(nextState);
+    });
+
+    void bridge
+      .getUpdateState()
+      .then((nextState) => {
+        if (disposed || receivedSubscriptionUpdate) return;
+        setDesktopUpdateState(nextState);
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, []);
 
   const rotateWorkspaceAccessMutation = useMutation({
     mutationFn: async () => {
@@ -334,8 +373,28 @@ function SettingsRouteView() {
   );
 
   const saveOrUpdateDeployedWorkspace = useCallback(
-    (input: DesktopDeployRemoteWorkspaceResult) => {
+    (
+      input: DesktopDeployRemoteWorkspaceResult,
+      deploymentRequest: {
+        host: string;
+        username?: string;
+        port?: number;
+        connectHost?: string;
+        serverPort?: number;
+      },
+    ) => {
       const existingWorkspace = settings.workspaces.find((workspace) => workspace.wsUrl === input.wsUrl);
+      const nextDeployment = {
+        host: deploymentRequest.host,
+        ...(deploymentRequest.username ? { username: deploymentRequest.username } : {}),
+        ...(deploymentRequest.port !== undefined ? { port: deploymentRequest.port } : {}),
+        ...(deploymentRequest.connectHost ? { connectHost: deploymentRequest.connectHost } : {}),
+        ...(deploymentRequest.serverPort !== undefined
+          ? { serverPort: deploymentRequest.serverPort }
+          : {}),
+        serviceName: input.serviceName,
+        ...(input.deployedVersion ? { deployedVersion: input.deployedVersion } : {}),
+      };
 
       if (existingWorkspace) {
         updateSettings({
@@ -346,6 +405,7 @@ function SettingsRouteView() {
                   ...workspace,
                   name: input.workspaceName,
                   authToken: input.authToken,
+                  deployment: nextDeployment,
                 }
               : workspace,
           ),
@@ -373,6 +433,7 @@ function SettingsRouteView() {
             name: input.workspaceName,
             wsUrl: input.wsUrl,
             authToken: input.authToken,
+            deployment: nextDeployment,
           },
         ],
       });
@@ -417,11 +478,12 @@ function SettingsRouteView() {
           ? { workspaceName: deployWorkspaceNameInput.trim() }
           : {}),
       };
-      return api.server.deployRemoteWorkspaceServer(deploymentInput);
+      const deployment = await api.server.deployRemoteWorkspaceServer(deploymentInput);
+      return { deployment, deploymentInput };
     },
-    onSuccess: (deployment) => {
+    onSuccess: ({ deployment, deploymentInput }) => {
       try {
-        const disposition = saveOrUpdateDeployedWorkspace(deployment);
+        const disposition = saveOrUpdateDeployedWorkspace(deployment, deploymentInput);
         setDeployWorkspaceNameInput("");
         setDeployWorkspaceHostInput("");
         setDeployWorkspaceUsernameInput("");
@@ -434,11 +496,18 @@ function SettingsRouteView() {
         setWorkspaceError(null);
         setWorkspaceCertificate(null);
         setWorkspaceCertificateMessage(null);
-        setDeployWorkspaceMessage(
+        const messageParts = [
           deployment.lingerEnabled === false
             ? `Remote workspace ${disposition === "created" ? "saved" : "updated"}. The service is running, but it may stop after logout until linger is enabled for that remote user.`
             : `Remote workspace ${disposition === "created" ? "saved" : "updated"} from ${deployment.serviceName}.`,
-        );
+        ];
+        if (deployment.deployedVersion) {
+          messageParts.push(`Version ${deployment.deployedVersion}.`);
+        }
+        if (deployment.warnings.length > 0) {
+          messageParts.push(deployment.warnings.join(" "));
+        }
+        setDeployWorkspaceMessage(messageParts.join(" "));
       } catch (error) {
         setDeployWorkspaceMessage(
           error instanceof Error ? error.message : "Remote workspace deployed, but it could not be saved locally.",
@@ -448,6 +517,54 @@ function SettingsRouteView() {
     onError: (error) => {
       setDeployWorkspaceMessage(
         error instanceof Error ? error.message : "Unable to deploy the remote workspace server.",
+      );
+    },
+  });
+
+  const redeployManagedWorkspaceMutation = useMutation({
+    mutationFn: async (workspaceId: string) => {
+      const workspace = workspaces.find((candidate) => candidate.id === workspaceId);
+      if (!workspace || workspace.isLocal || !workspace.deployment) {
+        throw new Error("This workspace is not managed by the desktop deployer.");
+      }
+      const api = ensureNativeApi();
+      const deploymentInput = {
+        host: workspace.deployment.host,
+        ...(workspace.deployment.username ? { username: workspace.deployment.username } : {}),
+        ...(workspace.deployment.port !== undefined ? { port: workspace.deployment.port } : {}),
+        ...(workspace.deployment.connectHost
+          ? { connectHost: workspace.deployment.connectHost }
+          : {}),
+        ...(workspace.deployment.serverPort !== undefined
+          ? { serverPort: workspace.deployment.serverPort }
+          : {}),
+        workspaceName: workspace.name,
+      };
+      const deployment = await api.server.deployRemoteWorkspaceServer(deploymentInput);
+      return { deployment, deploymentInput };
+    },
+    onSuccess: ({ deployment, deploymentInput }) => {
+      try {
+        saveOrUpdateDeployedWorkspace(deployment, deploymentInput);
+        const messageParts = [`Remote workspace updated from ${deployment.serviceName}.`];
+        if (deployment.deployedVersion) {
+          messageParts.push(`Version ${deployment.deployedVersion}.`);
+        }
+        if (deployment.warnings.length > 0) {
+          messageParts.push(deployment.warnings.join(" "));
+        }
+        setDeployWorkspaceMessage(messageParts.join(" "));
+      } catch (error) {
+        setDeployWorkspaceMessage(
+          error instanceof Error
+            ? error.message
+            : "Remote workspace updated, but local settings could not be refreshed.",
+        );
+      }
+    },
+    onError: (error) => {
+      setDeployWorkspaceMessage(
+        error instanceof Error ? error.message : "Unable to update the remote workspace server.",
       );
     },
   });
@@ -671,6 +788,17 @@ function SettingsRouteView() {
                     const statusDotClass = isActive
                       ? workspaceStatusDotClassName(activeWorkspaceConnectionState)
                       : "bg-zinc-400";
+                    const managedDeployment = workspace.deployment;
+                    const managedWorkspaceVersion = managedDeployment?.deployedVersion?.trim() || null;
+                    const needsManagedUpdate =
+                      !workspace.isLocal &&
+                      managedDeployment !== null &&
+                      desktopCurrentVersion !== null &&
+                      managedWorkspaceVersion !== null &&
+                      managedWorkspaceVersion !== desktopCurrentVersion;
+                    const isUpdatingManagedWorkspace =
+                      redeployManagedWorkspaceMutation.isPending &&
+                      redeployManagedWorkspaceMutation.variables === workspace.id;
                     return (
                       <div
                         key={workspace.id}
@@ -687,9 +815,19 @@ function SettingsRouteView() {
                                   Local
                                 </span>
                               )}
+                              {!workspace.isLocal && managedDeployment && (
+                                <span className="rounded-full bg-secondary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                                  Managed
+                                </span>
+                              )}
                               {isActive && (
                                 <span className="rounded-full bg-primary px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-primary-foreground">
                                   Active
+                                </span>
+                              )}
+                              {needsManagedUpdate && (
+                                <span className="rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:text-amber-300">
+                                  Update available
                                 </span>
                               )}
                               <span className={`ml-auto flex items-center gap-1 text-[11px] ${statusClass}`}>
@@ -706,9 +844,36 @@ function SettingsRouteView() {
                                 {workspace.authToken.trim().slice(-4)}
                               </p>
                             )}
+                            {!workspace.isLocal && managedDeployment && (
+                              <p className="text-[11px] text-muted-foreground/80">
+                                SSH {managedDeployment.username ? `${managedDeployment.username}@` : ""}
+                                {managedDeployment.host}
+                                {managedDeployment.port !== undefined ? `:${managedDeployment.port}` : ""}
+                                {managedDeployment.serviceName ? ` via ${managedDeployment.serviceName}` : ""}
+                                {managedWorkspaceVersion ? `, deployed ${managedWorkspaceVersion}` : ""}
+                                {desktopCurrentVersion && needsManagedUpdate
+                                  ? `, desktop ${desktopCurrentVersion}`
+                                  : ""}
+                              </p>
+                            )}
                           </div>
 
                           <div className="flex items-center gap-2">
+                            {!workspace.isLocal && managedDeployment && (
+                              <Button
+                                size="sm"
+                                variant={needsManagedUpdate ? "default" : "outline"}
+                                onClick={() => redeployManagedWorkspaceMutation.mutate(workspace.id)}
+                                disabled={isUpdatingManagedWorkspace}
+                              >
+                                <RefreshCcwIcon className="mr-1 size-3.5" />
+                                {isUpdatingManagedWorkspace
+                                  ? "Updating..."
+                                  : needsManagedUpdate
+                                    ? "Update"
+                                    : "Redeploy"}
+                              </Button>
+                            )}
                             {!isActive && (
                               <Button
                                 size="sm"

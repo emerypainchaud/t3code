@@ -417,6 +417,15 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
       truncated: false,
     };
   }
+  if (tag === WS_METHODS.projectsListDirectory) {
+    const directoryPath = typeof body.path === "string" ? body.path : "/repo";
+    return {
+      directoryPath,
+      parentPath: directoryPath === "/" ? null : "/",
+      entries: [],
+      truncated: false,
+    };
+  }
   if (tag === WS_METHODS.terminalOpen) {
     return {
       threadId: typeof body.threadId === "string" ? body.threadId : THREAD_ID,

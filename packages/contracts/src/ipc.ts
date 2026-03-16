@@ -19,6 +19,8 @@ import type {
   GitStatusResult,
 } from "./git";
 import type {
+  ProjectListDirectoryInput,
+  ProjectListDirectoryResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
@@ -133,6 +135,13 @@ export interface DesktopDeployRemoteWorkspaceResult {
   serviceName: string;
   remoteArch: "x64" | "arm64";
   lingerEnabled: boolean | null;
+  deployedVersion: string | null;
+  capabilities: {
+    git: boolean;
+    codex: boolean;
+    claudeCode: boolean;
+  };
+  warnings: string[];
 }
 
 export interface DesktopBridge {
@@ -172,6 +181,7 @@ export interface NativeApi {
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
   projects: {
+    listDirectory: (input: ProjectListDirectoryInput) => Promise<ProjectListDirectoryResult>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };

@@ -1,6 +1,7 @@
 import * as ChildProcess from "node:child_process";
 import * as Crypto from "node:crypto";
 import * as FS from "node:fs/promises";
+import * as Net from "node:net";
 import * as Path from "node:path";
 
 import type {
@@ -23,6 +24,19 @@ interface RemoteWorkspaceDeploymentControllerOptions {
 interface CommandResult {
   readonly stdout: string;
   readonly stderr: string;
+}
+
+interface RemoteWorkspaceCapabilities {
+  readonly git: boolean;
+  readonly codex: boolean;
+  readonly claudeCode: boolean;
+}
+
+interface RemoteWorkspaceProbeResult {
+  readonly serviceName: string;
+  readonly lingerEnabled: boolean | null;
+  readonly deployedVersion: string | null;
+  readonly capabilities: RemoteWorkspaceCapabilities;
 }
 
 class RemoteWorkspaceDeploymentError extends Error {
@@ -272,12 +286,37 @@ if ! command -v systemctl >/dev/null 2>&1; then
   exit 1
 fi
 
+RUNTIME_DIR="/run/user/$(id -u)"
+BUS_PATH="\${RUNTIME_DIR}/bus"
+if [[ ! -S "\${BUS_PATH}" ]]; then
+  echo "Remote user systemd bus is unavailable. Sign into the remote user once and retry." >&2
+  exit 1
+fi
+
+export XDG_RUNTIME_DIR="\${RUNTIME_DIR}"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=\${BUS_PATH}"
+
+linger_value=""
+if command -v loginctl >/dev/null 2>&1; then
+  linger_value="$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)"
+  if [[ "\${linger_value}" != "yes" ]] && command -v sudo >/dev/null 2>&1; then
+    if sudo -n loginctl enable-linger "$USER" >/dev/null 2>&1; then
+      linger_value="yes"
+    fi
+  fi
+fi
+
+if [[ "\${linger_value}" == "no" ]]; then
+  echo "Remote workspace requires linger for $USER. Run: sudo loginctl enable-linger $USER" >&2
+  exit 1
+fi
+
 mkdir -p "\${INSTALL_ROOT}" "\${STATE_DIR}" "\${SYSTEMD_DIR}"
 install -m 755 "\${TMP_BINARY}" "\${INSTALL_PATH}"
 rm -f "\${TMP_BINARY}"
 
 cat > "\${MANIFEST_PATH}" <<EOF
-{"serviceName":"\${SERVICE_NAME}","version":"\${APP_VERSION}","arch":"\${REMOTE_ARCH}"}
+{"serviceName":"\${SERVICE_NAME}","version":"\${APP_VERSION}","arch":"\${REMOTE_ARCH}","serverPort":\${SERVER_PORT},"deployedAt":"$(date -u +"%Y-%m-%dT%H:%M:%SZ")"}
 EOF
 
 cat > "\${UNIT_PATH}" <<EOF
@@ -289,9 +328,14 @@ Wants=network-online.target
 [Service]
 Type=simple
 WorkingDirectory=%h
+Environment=PATH=%h/.bun/bin:%h/.local/bin:%h/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/bin:/sbin
 ExecStart=\${INSTALL_PATH} --host 0.0.0.0 --port \${SERVER_PORT} --auth-token \${AUTH_TOKEN} --state-dir \${STATE_DIR} --no-browser
 Restart=always
 RestartSec=2
+KillMode=mixed
+TimeoutStopSec=10
+SuccessExitStatus=SIGTERM SIGINT
+FinalKillSignal=SIGKILL
 
 [Install]
 WantedBy=default.target
@@ -302,11 +346,6 @@ systemctl --user enable --now "\${SERVICE_NAME}.service" >/dev/null
 systemctl --user restart "\${SERVICE_NAME}.service"
 systemctl --user is-active --quiet "\${SERVICE_NAME}.service"
 
-linger_value=""
-if command -v loginctl >/dev/null 2>&1; then
-  linger_value="$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)"
-fi
-
 linger_json=null
 if [[ "\${linger_value}" == "yes" ]]; then
   linger_json=true
@@ -316,6 +355,169 @@ fi
 
 printf '{"serviceName":"%s","lingerEnabled":%s}\n' "\${SERVICE_NAME}" "\${linger_json}"
 `;
+}
+
+function remoteProbeScript(): string {
+  return `set -euo pipefail
+
+SERVICE_NAME="$1"
+SERVER_PORT="$2"
+
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+export DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
+
+if [[ ! -S "$XDG_RUNTIME_DIR/bus" ]]; then
+  echo "Remote user systemd bus is unavailable." >&2
+  exit 1
+fi
+
+systemctl --user is-active --quiet "$SERVICE_NAME"
+
+if command -v ss >/dev/null 2>&1; then
+  for _ in 1 2 3 4 5; do
+    if ss -ltn | grep -q "[.:]$SERVER_PORT "; then
+      break
+    fi
+    sleep 1
+  done
+  if ! ss -ltn | grep -q "[.:]$SERVER_PORT "; then
+    echo "Remote workspace service is active but port $SERVER_PORT is not listening." >&2
+    exit 1
+  fi
+fi
+
+INSTALL_ROOT="$HOME/.local/share/$SERVICE_NAME"
+MANIFEST_PATH="$INSTALL_ROOT/deployment.json"
+version_json=null
+if [[ -f "$MANIFEST_PATH" ]]; then
+  version_json="$(sed -n 's/.*"version":"\\([^"]*\\)".*/"\\1"/p' "$MANIFEST_PATH" | head -n 1)"
+  if [[ -z "$version_json" ]]; then
+    version_json=null
+  fi
+fi
+
+PATH="$HOME/.bun/bin:$HOME/.local/bin:$HOME/bin:/usr/local/bin:/usr/bin:/usr/local/sbin:/usr/sbin:/bin:/sbin"
+git_json=false
+if command -v git >/dev/null 2>&1; then
+  git_json=true
+fi
+codex_json=false
+if command -v codex >/dev/null 2>&1; then
+  codex_json=true
+fi
+claude_json=false
+if command -v claude >/dev/null 2>&1 || command -v claude-code >/dev/null 2>&1; then
+  claude_json=true
+fi
+
+linger_value=""
+if command -v loginctl >/dev/null 2>&1; then
+  linger_value="$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || true)"
+fi
+linger_json=null
+if [[ "$linger_value" == "yes" ]]; then
+  linger_json=true
+elif [[ "$linger_value" == "no" ]]; then
+  linger_json=false
+fi
+
+printf '{"serviceName":"%s","lingerEnabled":%s,"deployedVersion":%s,"capabilities":{"git":%s,"codex":%s,"claudeCode":%s}}\n' "$SERVICE_NAME" "$linger_json" "$version_json" "$git_json" "$codex_json" "$claude_json"
+`;
+}
+
+async function waitForRemotePortReachability(input: {
+  readonly host: string;
+  readonly port: number;
+  readonly timeoutMs: number;
+}): Promise<void> {
+  const deadline = Date.now() + input.timeoutMs;
+  let lastErrorMessage = `Timed out reaching ${input.host}:${input.port}.`;
+
+  while (Date.now() < deadline) {
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const socket = Net.createConnection({
+          host: input.host,
+          port: input.port,
+        });
+        const onError = (error: Error) => {
+          socket.destroy();
+          reject(error);
+        };
+        socket.setTimeout(2_500, () => onError(new Error("Connection timed out.")));
+        socket.once("connect", () => {
+          socket.end();
+          resolve();
+        });
+        socket.once("error", onError);
+      });
+      return;
+    } catch (error) {
+      lastErrorMessage = error instanceof Error ? error.message : String(error);
+      await new Promise((resolve) => setTimeout(resolve, 1_000));
+    }
+  }
+
+  throw new RemoteWorkspaceDeploymentError(
+    `Remote workspace service started but ${input.host}:${input.port} is not reachable from this desktop app yet: ${lastErrorMessage}`,
+  );
+}
+
+async function probeRemoteWorkspace(input: {
+  readonly deploymentInput: DesktopDeployRemoteWorkspaceInput;
+  readonly sshTarget: string;
+  readonly serviceName: string;
+  readonly serverPort: number;
+}): Promise<RemoteWorkspaceProbeResult> {
+  const result = await runCommand({
+    command: "ssh",
+    args: [
+      ...baseSshArgs(input.deploymentInput),
+      input.sshTarget,
+      "bash",
+      "-s",
+      "--",
+      input.serviceName,
+      String(input.serverPort),
+    ],
+    stdin: remoteProbeScript(),
+  });
+
+  try {
+    const parsed = JSON.parse(result.stdout.trim()) as RemoteWorkspaceProbeResult;
+    return {
+      serviceName: parsed.serviceName || input.serviceName,
+      lingerEnabled:
+        typeof parsed.lingerEnabled === "boolean" ? parsed.lingerEnabled : null,
+      deployedVersion:
+        typeof parsed.deployedVersion === "string" && parsed.deployedVersion.length > 0
+          ? parsed.deployedVersion
+          : null,
+      capabilities: {
+        git: parsed.capabilities?.git === true,
+        codex: parsed.capabilities?.codex === true,
+        claudeCode: parsed.capabilities?.claudeCode === true,
+      },
+    };
+  } catch {
+    throw new RemoteWorkspaceDeploymentError(
+      result.stdout.trim() || "Unable to inspect remote workspace deployment state.",
+    );
+  }
+}
+
+function capabilityWarnings(capabilities: RemoteWorkspaceCapabilities): string[] {
+  const warnings: string[] = [];
+  if (!capabilities.git) {
+    warnings.push("Remote host is missing `git`, so repository features will fail.");
+  }
+  if (!capabilities.codex) {
+    warnings.push("Remote host is missing `codex`, so Codex sessions cannot start there yet.");
+  }
+  if (!capabilities.claudeCode) {
+    warnings.push("Remote host is missing `claude`/`claude-code`, so Claude Code sessions cannot start there yet.");
+  }
+  return warnings;
 }
 
 export function createRemoteWorkspaceDeploymentController(
@@ -377,14 +579,31 @@ export function createRemoteWorkspaceDeploymentController(
         parsed = {};
       }
 
+      const serviceName = parsed.serviceName ?? DEFAULT_SERVICE_NAME;
+      const remoteProbe = await probeRemoteWorkspace({
+        deploymentInput: input,
+        sshTarget,
+        serviceName,
+        serverPort,
+      });
+      await waitForRemotePortReachability({
+        host: connectHost,
+        port: serverPort,
+        timeoutMs: 20_000,
+      });
+      const warnings = capabilityWarnings(remoteProbe.capabilities);
+
       return {
         workspaceName,
         wsUrl: `ws://${connectHost}:${serverPort}`,
         authToken,
-        serviceName: parsed.serviceName ?? DEFAULT_SERVICE_NAME,
+        serviceName,
         remoteArch,
         lingerEnabled:
-          typeof parsed.lingerEnabled === "boolean" ? parsed.lingerEnabled : null,
+          typeof remoteProbe.lingerEnabled === "boolean" ? remoteProbe.lingerEnabled : null,
+        deployedVersion: remoteProbe.deployedVersion,
+        capabilities: remoteProbe.capabilities,
+        warnings,
       };
     },
   };

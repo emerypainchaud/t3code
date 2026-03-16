@@ -16,6 +16,7 @@ import {
   DEFAULT_RUNTIME_MODE,
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
+  type ProjectListDirectoryResult,
   ProjectId,
   ThreadId,
   type GitStatusResult,
@@ -51,6 +52,15 @@ import {
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
+import {
+  Dialog,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogPanel,
+  DialogPopup,
+  DialogTitle,
+} from "./ui/dialog";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -119,6 +129,10 @@ interface PrStatusIndicator {
   colorClass: string;
   tooltip: string;
   url: string;
+}
+
+interface RemoteDirectoryBrowserState {
+  listing: ProjectListDirectoryResult;
 }
 
 type ThreadPr = GitStatusResult["pr"];
@@ -469,10 +483,8 @@ export default function Sidebar() {
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
-  const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
-    ...serverConfigQueryOptions(),
-    select: (config) => config.keybindings,
-  });
+  const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
   const queryClient = useQueryClient();
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const [addingProject, setAddingProject] = useState(false);
@@ -480,6 +492,8 @@ export default function Sidebar() {
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
+  const [remoteDirectoryBrowser, setRemoteDirectoryBrowser] =
+    useState<RemoteDirectoryBrowserState | null>(null);
   const addProjectInputRef = useRef<HTMLInputElement | null>(null);
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
@@ -716,9 +730,39 @@ export default function Sidebar() {
     void addProjectFromPath(newCwd);
   };
 
+  const loadRemoteDirectory = useCallback(
+    async (directoryPath?: string) => {
+      const api = readNativeApi();
+      if (!api || isPickingFolder) return;
+      setIsPickingFolder(true);
+      setAddProjectError(null);
+      try {
+        const nextPath =
+          directoryPath?.trim() ||
+          remoteDirectoryBrowser?.listing.directoryPath ||
+          (await api.server.getConfig().then((config) => config.cwd).catch(() => null)) ||
+          "/";
+        const listing = await api.projects.listDirectory({ path: nextPath, limit: 200 });
+        setRemoteDirectoryBrowser({ listing });
+        setNewCwd(listing.directoryPath);
+      } catch (error) {
+        setAddProjectError(
+          error instanceof Error ? error.message : "Unable to browse the remote workspace.",
+        );
+      } finally {
+        setIsPickingFolder(false);
+      }
+    },
+    [isPickingFolder, remoteDirectoryBrowser?.listing.directoryPath],
+  );
+
   const handlePickFolder = async () => {
     const api = readNativeApi();
     if (!api || isPickingFolder) return;
+    if (!activeWorkspace.isLocal) {
+      await loadRemoteDirectory(newCwd);
+      return;
+    }
     setIsPickingFolder(true);
     let pickedPath: string | null = null;
     try {
@@ -733,6 +777,10 @@ export default function Sidebar() {
     }
     setIsPickingFolder(false);
   };
+
+  useEffect(() => {
+    setRemoteDirectoryBrowser(null);
+  }, [activeWorkspace.id, addingProject]);
 
   const cancelRename = useCallback(() => {
     setRenamingThreadId(null);
@@ -1283,7 +1331,7 @@ export default function Sidebar() {
 
           {addingProject && (
             <div className="mb-2 px-1">
-              {isElectron && (
+              {(isElectron || !activeWorkspace.isLocal) && (
                 <button
                   type="button"
                   className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
@@ -1291,7 +1339,13 @@ export default function Sidebar() {
                   disabled={isPickingFolder || isAddingProject}
                 >
                   <FolderIcon className="size-3.5" />
-                  {isPickingFolder ? "Picking folder..." : "Browse for folder"}
+                  {isPickingFolder
+                    ? activeWorkspace.isLocal
+                      ? "Picking folder..."
+                      : "Loading folders..."
+                    : activeWorkspace.isLocal
+                      ? "Browse for folder"
+                      : "Browse remote folders"}
                 </button>
               )}
               <div className="flex gap-1.5">
@@ -1302,7 +1356,7 @@ export default function Sidebar() {
                       ? "border-red-500/70 focus:border-red-500"
                       : "border-border focus:border-ring"
                   }`}
-                  placeholder="/path/to/project"
+                  placeholder={activeWorkspace.isLocal ? "/path/to/project" : "/remote/path/to/project"}
                   value={newCwd}
                   onChange={(event) => {
                     setNewCwd(event.target.value);
@@ -1344,6 +1398,111 @@ export default function Sidebar() {
                 </button>
               </div>
             </div>
+          )}
+
+          {!activeWorkspace.isLocal && remoteDirectoryBrowser && (
+            <Dialog
+              open
+              onOpenChange={(nextOpen) => {
+                if (!nextOpen) {
+                  setRemoteDirectoryBrowser(null);
+                  addProjectInputRef.current?.focus();
+                }
+              }}
+            >
+              <DialogPopup className="max-w-4xl">
+                <DialogHeader>
+                  <DialogTitle>Browse Remote Workspace</DialogTitle>
+                  <DialogDescription>
+                    Select a directory on {activeWorkspace.name} and use it as the project root.
+                  </DialogDescription>
+                </DialogHeader>
+                <DialogPanel className="space-y-4">
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      className="inline-flex size-9 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                      onClick={() =>
+                        remoteDirectoryBrowser.listing.parentPath
+                          ? void loadRemoteDirectory(remoteDirectoryBrowser.listing.parentPath)
+                          : undefined
+                      }
+                      disabled={
+                        isPickingFolder || remoteDirectoryBrowser.listing.parentPath === null
+                      }
+                      aria-label="Browse parent directory"
+                    >
+                      <ArrowLeftIcon className="size-4" />
+                    </button>
+                    <div className="min-w-0 flex-1 rounded-lg border border-border/70 bg-secondary/60 px-3 py-2 font-mono text-sm text-foreground/80">
+                      <div className="truncate">
+                        {remoteDirectoryBrowser.listing.directoryPath}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-xl border border-border bg-background/70">
+                    <div className="flex items-center justify-between border-b border-border px-4 py-2 text-xs text-muted-foreground">
+                      <span>
+                        {isPickingFolder
+                          ? "Loading directories..."
+                          : `${remoteDirectoryBrowser.listing.entries.length} directories`}
+                      </span>
+                      {remoteDirectoryBrowser.listing.truncated ? (
+                        <span>Showing the first 200 entries</span>
+                      ) : null}
+                    </div>
+                    <div className="max-h-[52vh] overflow-y-auto">
+                      {remoteDirectoryBrowser.listing.entries.length > 0 ? (
+                        remoteDirectoryBrowser.listing.entries.map((entry) => (
+                          <button
+                            key={entry.path}
+                            type="button"
+                            className="flex w-full items-center gap-3 border-b border-border/40 px-4 py-3 text-left text-sm text-foreground/85 transition-colors last:border-b-0 hover:bg-accent hover:text-foreground"
+                            onClick={() => void loadRemoteDirectory(entry.path)}
+                            disabled={isPickingFolder}
+                          >
+                            <FolderIcon className="size-4 shrink-0" />
+                            <span className="min-w-0 flex-1 truncate">{entry.name}</span>
+                            <ChevronRightIcon className="size-4 shrink-0 text-muted-foreground/70" />
+                          </button>
+                        ))
+                      ) : (
+                        <div className="px-4 py-6 text-sm text-muted-foreground">
+                          No subdirectories found in this location.
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                </DialogPanel>
+                <DialogFooter>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setRemoteDirectoryBrowser(null);
+                      addProjectInputRef.current?.focus();
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setNewCwd(remoteDirectoryBrowser.listing.directoryPath);
+                      setRemoteDirectoryBrowser(null);
+                      addProjectInputRef.current?.focus();
+                    }}
+                  >
+                    Use This Folder
+                  </Button>
+                  <Button
+                    onClick={() => void addProjectFromPath(remoteDirectoryBrowser.listing.directoryPath)}
+                    disabled={isAddingProject}
+                  >
+                    {isAddingProject ? "Adding..." : "Add Project"}
+                  </Button>
+                </DialogFooter>
+              </DialogPopup>
+            </Dialog>
           )}
 
           <SidebarMenu>
