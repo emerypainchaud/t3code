@@ -1,3 +1,4 @@
+import type { EditorId } from "@t3tools/contracts";
 import { isMacPlatform } from "./lib/utils";
 
 export type TerminalLinkKind = "url" | "path";
@@ -172,4 +173,8 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
 
   if (!line) return resolvedPath;
   return `${resolvedPath}:${line}${column ? `:${column}` : ""}`;
+}
+
+export function preferredTerminalEditor(): EditorId {
+  return "vscode";
 }

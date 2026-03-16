@@ -279,6 +279,9 @@ function addThreadToSnapshot(
         projectId: PROJECT_ID,
         title: "New thread",
         model: "gpt-5",
+        executionTarget: {
+          kind: "workspace-local",
+        },
         interactionMode: "default",
         runtimeMode: "full-access",
         branch: "main",

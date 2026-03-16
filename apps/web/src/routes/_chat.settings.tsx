@@ -1,7 +1,11 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useState } from "react";
-import { type DesktopRemoteTlsCertificateInspection, type ProviderKind } from "@t3tools/contracts";
+import {
+  type DesktopDeployRemoteWorkspaceResult,
+  type DesktopRemoteTlsCertificateInspection,
+  type ProviderKind,
+} from "@t3tools/contracts";
 import { getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 import {
   CheckIcon,
@@ -10,6 +14,7 @@ import {
   KeyRoundIcon,
   PlusIcon,
   RefreshCcwIcon,
+  ServerCogIcon,
   Trash2Icon,
   ZapIcon,
 } from "lucide-react";
@@ -150,6 +155,13 @@ function SettingsRouteView() {
     useState<DesktopRemoteTlsCertificateInspection | null>(null);
   const [workspaceCertificateMessage, setWorkspaceCertificateMessage] = useState<string | null>(null);
   const [workspaceAccessMessage, setWorkspaceAccessMessage] = useState<string | null>(null);
+  const [deployWorkspaceHostInput, setDeployWorkspaceHostInput] = useState("");
+  const [deployWorkspaceUsernameInput, setDeployWorkspaceUsernameInput] = useState("");
+  const [deployWorkspaceSshPortInput, setDeployWorkspaceSshPortInput] = useState("");
+  const [deployWorkspaceConnectHostInput, setDeployWorkspaceConnectHostInput] = useState("");
+  const [deployWorkspaceServerPortInput, setDeployWorkspaceServerPortInput] = useState("");
+  const [deployWorkspaceNameInput, setDeployWorkspaceNameInput] = useState("");
+  const [deployWorkspaceMessage, setDeployWorkspaceMessage] = useState<string | null>(null);
   const [customModelInputByProvider, setCustomModelInputByProvider] = useState<
     Record<ProviderKind, string>
   >({
@@ -320,6 +332,125 @@ function SettingsRouteView() {
     },
     [settings.workspaces, updateSettings],
   );
+
+  const saveOrUpdateDeployedWorkspace = useCallback(
+    (input: DesktopDeployRemoteWorkspaceResult) => {
+      const existingWorkspace = settings.workspaces.find((workspace) => workspace.wsUrl === input.wsUrl);
+
+      if (existingWorkspace) {
+        updateSettings({
+          activeWorkspaceId: existingWorkspace.id,
+          workspaces: settings.workspaces.map((workspace) =>
+            workspace.id === existingWorkspace.id
+              ? {
+                  ...workspace,
+                  name: input.workspaceName,
+                  authToken: input.authToken,
+                }
+              : workspace,
+          ),
+        });
+        return "updated" as const;
+      }
+
+      if (
+        settings.workspaces.some(
+          (workspace) => workspace.name.toLowerCase() === input.workspaceName.toLowerCase(),
+        )
+      ) {
+        throw new Error(
+          `A workspace named "${input.workspaceName}" already exists. Rename it or choose a different label before deploying.`,
+        );
+      }
+
+      const workspaceId = crypto.randomUUID();
+      updateSettings({
+        activeWorkspaceId: workspaceId,
+        workspaces: [
+          ...settings.workspaces,
+          {
+            id: workspaceId,
+            name: input.workspaceName,
+            wsUrl: input.wsUrl,
+            authToken: input.authToken,
+          },
+        ],
+      });
+      return "created" as const;
+    },
+    [settings.workspaces, updateSettings],
+  );
+
+  const deployWorkspaceMutation = useMutation({
+    mutationFn: async () => {
+      const host = deployWorkspaceHostInput.trim();
+      if (!host) {
+        throw new Error("SSH host is required.");
+      }
+
+      const parsedSshPort = deployWorkspaceSshPortInput.trim();
+      const sshPort =
+        parsedSshPort.length > 0 ? Number.parseInt(parsedSshPort, 10) : null;
+      if (sshPort !== null && (!Number.isInteger(sshPort) || sshPort <= 0 || sshPort > 65535)) {
+        throw new Error("SSH port must be between 1 and 65535.");
+      }
+
+      const parsedServerPort = deployWorkspaceServerPortInput.trim();
+      const serverPort =
+        parsedServerPort.length > 0 ? Number.parseInt(parsedServerPort, 10) : null;
+      if (serverPort !== null && (!Number.isInteger(serverPort) || serverPort <= 0 || serverPort > 65535)) {
+        throw new Error("Server port must be between 1 and 65535.");
+      }
+
+      const api = ensureNativeApi();
+      const deploymentInput = {
+        host,
+        ...(deployWorkspaceUsernameInput.trim()
+          ? { username: deployWorkspaceUsernameInput.trim() }
+          : {}),
+        ...(sshPort !== null ? { port: sshPort } : {}),
+        ...(deployWorkspaceConnectHostInput.trim()
+          ? { connectHost: deployWorkspaceConnectHostInput.trim() }
+          : {}),
+        ...(serverPort !== null ? { serverPort } : {}),
+        ...(deployWorkspaceNameInput.trim()
+          ? { workspaceName: deployWorkspaceNameInput.trim() }
+          : {}),
+      };
+      return api.server.deployRemoteWorkspaceServer(deploymentInput);
+    },
+    onSuccess: (deployment) => {
+      try {
+        const disposition = saveOrUpdateDeployedWorkspace(deployment);
+        setDeployWorkspaceNameInput("");
+        setDeployWorkspaceHostInput("");
+        setDeployWorkspaceUsernameInput("");
+        setDeployWorkspaceSshPortInput("");
+        setDeployWorkspaceConnectHostInput("");
+        setDeployWorkspaceServerPortInput("");
+        setWorkspaceNameInput("");
+        setWorkspaceUrlInput("");
+        setWorkspaceTokenInput("");
+        setWorkspaceError(null);
+        setWorkspaceCertificate(null);
+        setWorkspaceCertificateMessage(null);
+        setDeployWorkspaceMessage(
+          deployment.lingerEnabled === false
+            ? `Remote workspace ${disposition === "created" ? "saved" : "updated"}. The service is running, but it may stop after logout until linger is enabled for that remote user.`
+            : `Remote workspace ${disposition === "created" ? "saved" : "updated"} from ${deployment.serviceName}.`,
+        );
+      } catch (error) {
+        setDeployWorkspaceMessage(
+          error instanceof Error ? error.message : "Remote workspace deployed, but it could not be saved locally.",
+        );
+      }
+    },
+    onError: (error) => {
+      setDeployWorkspaceMessage(
+        error instanceof Error ? error.message : "Unable to deploy the remote workspace server.",
+      );
+    },
+  });
 
   const addWorkspace = useCallback(async () => {
     const normalizedUrl = normalizedWorkspaceUrl;
@@ -780,6 +911,101 @@ function SettingsRouteView() {
 
                         {workspaceAccessMessage && (
                           <p className="mt-3 text-xs text-muted-foreground">{workspaceAccessMessage}</p>
+                        )}
+                      </div>
+                    )}
+
+                    {isElectron && (
+                      <div className="mb-4 rounded-lg border border-border/80 bg-background/60 p-4">
+                        <div className="flex flex-wrap items-start justify-between gap-3">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-2">
+                              <ServerCogIcon className="size-4 text-muted-foreground" />
+                              <h4 className="text-sm font-medium text-foreground">
+                                Deploy remote workspace
+                              </h4>
+                            </div>
+                            <p className="text-xs text-muted-foreground">
+                              Use SSH once to install or update a self-contained Linux server binary,
+                              register a <code>systemd --user</code> service, start it, and save the
+                              workspace back into this desktop app. Key-based SSH is required.
+                            </p>
+                          </div>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            disabled={deployWorkspaceMutation.isPending}
+                            onClick={() => {
+                              setDeployWorkspaceMessage(null);
+                              deployWorkspaceMutation.mutate();
+                            }}
+                          >
+                            <ServerCogIcon className="mr-1 size-3.5" />
+                            {deployWorkspaceMutation.isPending ? "Deploying..." : "Deploy / Update"}
+                          </Button>
+                        </div>
+
+                        <div className="mt-4 grid gap-3 md:grid-cols-2">
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-muted-foreground">
+                              Workspace label
+                            </label>
+                            <Input
+                              value={deployWorkspaceNameInput}
+                              onChange={(event) => setDeployWorkspaceNameInput(event.target.value)}
+                              placeholder="GPU box"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-muted-foreground">SSH host</label>
+                            <Input
+                              value={deployWorkspaceHostInput}
+                              onChange={(event) => setDeployWorkspaceHostInput(event.target.value)}
+                              placeholder="192.168.1.42"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-muted-foreground">
+                              SSH username
+                            </label>
+                            <Input
+                              value={deployWorkspaceUsernameInput}
+                              onChange={(event) => setDeployWorkspaceUsernameInput(event.target.value)}
+                              placeholder="ubuntu"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-muted-foreground">SSH port</label>
+                            <Input
+                              value={deployWorkspaceSshPortInput}
+                              onChange={(event) => setDeployWorkspaceSshPortInput(event.target.value)}
+                              placeholder="22"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-muted-foreground">
+                              Workspace connect host
+                            </label>
+                            <Input
+                              value={deployWorkspaceConnectHostInput}
+                              onChange={(event) => setDeployWorkspaceConnectHostInput(event.target.value)}
+                              placeholder="Leave blank to use the SSH host"
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <label className="text-xs font-medium text-muted-foreground">
+                              Workspace server port
+                            </label>
+                            <Input
+                              value={deployWorkspaceServerPortInput}
+                              onChange={(event) => setDeployWorkspaceServerPortInput(event.target.value)}
+                              placeholder="3773"
+                            />
+                          </div>
+                        </div>
+
+                        {deployWorkspaceMessage && (
+                          <p className="mt-3 text-xs text-muted-foreground">{deployWorkspaceMessage}</p>
                         )}
                       </div>
                     )}

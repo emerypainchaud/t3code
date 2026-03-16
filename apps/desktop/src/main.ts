@@ -17,7 +17,11 @@ import {
 } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
-import type { DesktopUpdateActionResult, DesktopUpdateState } from "@t3tools/contracts";
+import type {
+  DesktopDeployRemoteWorkspaceInput,
+  DesktopUpdateActionResult,
+  DesktopUpdateState,
+} from "@t3tools/contracts";
 import { autoUpdater } from "electron-updater";
 
 import type { ContextMenuItem } from "@t3tools/contracts";
@@ -43,6 +47,7 @@ import {
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
 import { createRemoteTlsTrustController } from "./remoteTlsTrust";
+import { createRemoteWorkspaceDeploymentController } from "./remoteWorkspaceDeployment";
 
 fixPath();
 
@@ -57,6 +62,7 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:inspect-remote-tls-certificate";
 const TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:trust-remote-tls-certificate";
+const DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL = "desktop:deploy-remote-workspace-server";
 const STATE_DIR =
   process.env.T3CODE_STATE_DIR?.trim() || Path.join(OS.homedir(), ".t3", "userdata");
 const DESKTOP_SCHEME = "t3";
@@ -76,7 +82,18 @@ const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
+const REMOTE_WORKSPACE_BINARY_ROOTS = [
+  Path.join(__dirname, "../resources/remote-workspace-binaries"),
+  Path.join(process.resourcesPath, "resources", "remote-workspace-binaries"),
+  Path.join(process.resourcesPath, "remote-workspace-binaries"),
+];
 const remoteTlsTrustController = createRemoteTlsTrustController(STATE_DIR);
+const remoteWorkspaceDeploymentController = createRemoteWorkspaceDeploymentController({
+  repoRoot: ROOT_DIR,
+  stateDir: STATE_DIR,
+  appVersion: app.getVersion(),
+  embeddedBinaryRoots: REMOTE_WORKSPACE_BINARY_ROOTS,
+});
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 
@@ -1174,6 +1191,14 @@ function registerIpcHandlers(): void {
         url: input.url,
         fingerprintSha256: input.fingerprintSha256,
       });
+    },
+  );
+
+  ipcMain.removeHandler(DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL);
+  ipcMain.handle(
+    DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL,
+    async (_event, input: DesktopDeployRemoteWorkspaceInput) => {
+      return remoteWorkspaceDeploymentController.deploy(input);
     },
   );
 }

@@ -22,7 +22,7 @@ export function workspaceStatusDotClassName(state: WorkspaceConnectionState): st
     case "reconnecting":
       return "bg-amber-500 animate-pulse";
     case "disconnected":
-      return "bg-zinc-400";
+      return "bg-rose-500";
   }
 }
 
@@ -35,6 +35,6 @@ export function workspaceStatusTextClassName(state: WorkspaceConnectionState): s
     case "reconnecting":
       return "text-amber-600 dark:text-amber-300/90";
     case "disconnected":
-      return "text-muted-foreground";
+      return "text-rose-600 dark:text-rose-300/90";
   }
 }

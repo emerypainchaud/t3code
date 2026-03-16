@@ -14,12 +14,41 @@ import {
   DEFAULT_RUNTIME_MODE,
   type ChatImageAttachment,
 } from "./types";
+import { Debouncer } from "@tanstack/react-pacer";
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, type StateStorage } from "zustand/middleware";
 import { createWorkspaceScopedJsonStorage, workspaceScopedStorageKey } from "./workspaceStorage";
 
 export const COMPOSER_DRAFT_STORAGE_KEY = "t3code:composer-drafts:v1";
 export type DraftThreadEnvMode = "local" | "worktree";
+const COMPOSER_PERSIST_DEBOUNCE_MS = 300;
+
+interface DebouncedStorage extends StateStorage {
+  flush: () => void;
+}
+
+export function createDebouncedStorage(baseStorage: StateStorage): DebouncedStorage {
+  const debouncedSetItem = new Debouncer(
+    (name: string, value: string) => {
+      baseStorage.setItem(name, value);
+    },
+    { wait: COMPOSER_PERSIST_DEBOUNCE_MS },
+  );
+
+  return {
+    getItem: (name) => baseStorage.getItem(name),
+    setItem: (name, value) => {
+      debouncedSetItem.maybeExecute(name, value);
+    },
+    removeItem: (name) => {
+      debouncedSetItem.cancel();
+      baseStorage.removeItem(name);
+    },
+    flush: () => {
+      debouncedSetItem.flush();
+    },
+  };
+}
 
 export interface PersistedComposerImageAttachment {
   id: string;

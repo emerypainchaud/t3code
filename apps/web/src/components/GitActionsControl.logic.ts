@@ -122,6 +122,7 @@ export function summarizeGitResult(result: GitRunStackedActionResult): {
 export function buildMenuItems(
   gitStatus: GitStatusResult | null,
   isBusy: boolean,
+  hasOriginRemote = true,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
 
@@ -130,9 +131,11 @@ export function buildMenuItems(
   const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
   const canCommit = !isBusy && hasChanges;
-  const canPush = !isBusy && hasBranch && !hasChanges && !isBehind && gitStatus.aheadCount > 0;
+  const canPush =
+    !isBusy && hasOriginRemote && hasBranch && !hasChanges && !isBehind && gitStatus.aheadCount > 0;
   const canCreatePr =
     !isBusy &&
+    hasOriginRemote &&
     hasBranch &&
     !hasChanges &&
     !hasOpenPr &&
@@ -180,6 +183,7 @@ export function resolveQuickAction(
   gitStatus: GitStatusResult | null,
   isBusy: boolean,
   isDefaultBranch = false,
+  hasOriginRemote = true,
 ): GitQuickAction {
   if (isBusy) {
     return { label: "Commit", disabled: true, kind: "show_hint", hint: "Git action in progress." };
@@ -211,6 +215,9 @@ export function resolveQuickAction(
   }
 
   if (hasChanges) {
+    if (!gitStatus.hasUpstream && !hasOriginRemote) {
+      return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
+    }
     if (hasOpenPr || isDefaultBranch) {
       return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
     }
@@ -236,6 +243,14 @@ export function resolveQuickAction(
         disabled: true,
         kind: "show_hint",
         hint: "No local commits to push.",
+      };
+    }
+    if (!hasOriginRemote) {
+      return {
+        label: "Push",
+        disabled: true,
+        kind: "show_hint",
+        hint: 'Add an "origin" remote before pushing or creating a PR.',
       };
     }
     if (hasOpenPr || isDefaultBranch) {

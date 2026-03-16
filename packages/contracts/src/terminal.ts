@@ -68,6 +68,7 @@ export const TerminalRestartInput = Schema.Struct({
   rows: TerminalRowsSchema,
   env: Schema.optional(TerminalEnvSchema),
 });
+export type TerminalRestartInput = Schema.Codec.Encoded<typeof TerminalRestartInput>;
 
 export const TerminalCloseInput = Schema.Struct({
   ...TerminalThreadInput.fields,

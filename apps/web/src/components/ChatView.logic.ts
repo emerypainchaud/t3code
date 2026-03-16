@@ -7,6 +7,7 @@ import { Schema } from "effect";
 
 export const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const WORKTREE_BRANCH_PREFIX = "t3code";
+const DEFAULT_EXECUTION_TARGET = { kind: "workspace-local" } as const;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(ProjectId, Schema.String);
 
@@ -20,6 +21,7 @@ export function buildLocalDraftThread(
     id: threadId,
     codexThreadId: null,
     projectId: draftThread.projectId,
+    executionTarget: DEFAULT_EXECUTION_TARGET,
     title: "New thread",
     model: fallbackModel,
     runtimeMode: draftThread.runtimeMode,
@@ -118,8 +120,10 @@ export function cloneComposerImageForRetry(
 
 export function getCustomModelOptionsByProvider(settings: {
   customCodexModels: readonly string[];
+  customClaudeCodeModels?: readonly string[];
 }): Record<ProviderKind, ReadonlyArray<{ slug: string; name: string }>> {
   return {
     codex: getAppModelOptions("codex", settings.customCodexModels),
+    claudeCode: getAppModelOptions("claudeCode", settings.customClaudeCodeModels ?? []),
   };
 }

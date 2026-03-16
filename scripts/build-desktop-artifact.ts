@@ -63,6 +63,11 @@ const PLATFORM_CONFIG: Record<typeof BuildPlatform.Type, PlatformConfig> = {
     archChoices: ["x64", "arm64"],
   },
 };
+const REMOTE_WORKSPACE_BINARY_DIR = "remote-workspace-binaries";
+const REMOTE_WORKSPACE_BINARY_TARGETS = [
+  { arch: "x64", target: "bun-linux-x64" },
+  { arch: "arm64", target: "bun-linux-arm64" },
+] as const;
 
 interface BuildCliInput {
   readonly platform: Option.Option<typeof BuildPlatform.Type>;
@@ -442,6 +447,34 @@ function resolveGitHubPublishConfig():
   };
 }
 
+function stageRemoteWorkspaceBinaries(stageResourcesDir: string, repoRoot: string, verbose: boolean) {
+  return Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const outputDir = path.join(stageResourcesDir, REMOTE_WORKSPACE_BINARY_DIR);
+    const entryPath = path.join(repoRoot, "apps/server/src/index.ts");
+
+    if (!(yield* fs.exists(entryPath))) {
+      return yield* new BuildScriptError({
+        message: `Remote workspace server entry is missing at ${entryPath}.`,
+      });
+    }
+
+    yield* fs.makeDirectory(outputDir, { recursive: true });
+    yield* Effect.log("[desktop-artifact] Building embedded remote workspace binaries...");
+
+    for (const binaryTarget of REMOTE_WORKSPACE_BINARY_TARGETS) {
+      yield* runCommand(
+        ChildProcess.make({
+          cwd: repoRoot,
+          ...commandOutputOptions(verbose),
+          shell: process.platform === "win32",
+        })`bun build --compile --target=${binaryTarget.target} ${entryPath} --outfile ${path.join(outputDir, `t3-server-linux-${binaryTarget.arch}`)}`,
+      );
+    }
+  });
+}
+
 const createBuildConfig = Effect.fn("createBuildConfig")(function* (
   platform: typeof BuildPlatform.Type,
   target: string,
@@ -455,6 +488,13 @@ const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     directories: {
       buildResources: "apps/desktop/resources",
     },
+    extraResources: [
+      {
+        from: `apps/desktop/resources/${REMOTE_WORKSPACE_BINARY_DIR}`,
+        to: REMOTE_WORKSPACE_BINARY_DIR,
+        filter: ["**/*"],
+      },
+    ],
   };
   const publishConfig = resolveGitHubPublishConfig();
   if (publishConfig) {
@@ -611,6 +651,7 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   yield* fs.copy(distDirs.desktopDist, path.join(stageAppDir, "apps/desktop/dist-electron"));
   yield* fs.copy(distDirs.desktopResources, stageResourcesDir);
   yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
+  yield* stageRemoteWorkspaceBinaries(stageResourcesDir, repoRoot, options.verbose);
 
   yield* assertPlatformBuildResources(options.platform, stageResourcesDir, options.verbose);
 

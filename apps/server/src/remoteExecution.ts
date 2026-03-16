@@ -7,11 +7,18 @@ import type {
   ProviderKind,
   ProviderSessionStartInput,
 } from "@t3tools/contracts";
+import { REMOTE_SHELL_SCRIPT_FALLBACK } from "./remoteShellScript.ts";
 
 const REMOTE_EXECUTION_DIR = "remote-execution";
 const REMOTE_SHELL_SCRIPT_NAME = "t3-remote-shell.sh";
 const LOCAL_FALLBACK_SHELL = "/bin/bash";
-const REMOTE_SHELL_SCRIPT = fs.readFileSync(new URL("./remote-shell.sh", import.meta.url), "utf8");
+const REMOTE_SHELL_SCRIPT = (() => {
+  try {
+    return fs.readFileSync(new URL("./remote-shell.sh", import.meta.url), "utf8");
+  } catch {
+    return REMOTE_SHELL_SCRIPT_FALLBACK;
+  }
+})();
 
 function ensureExecutableFile(filePath: string, contents: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });

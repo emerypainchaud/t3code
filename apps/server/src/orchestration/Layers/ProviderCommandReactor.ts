@@ -747,6 +747,7 @@ const make = Effect.gen(function* () {
 
   return {
     start,
+    drain: Effect.void,
   } satisfies ProviderCommandReactorShape;
 });
 

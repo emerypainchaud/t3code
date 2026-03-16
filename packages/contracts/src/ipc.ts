@@ -117,6 +117,24 @@ export interface DesktopTrustRemoteTlsCertificateInput {
   fingerprintSha256: string;
 }
 
+export interface DesktopDeployRemoteWorkspaceInput {
+  host: string;
+  username?: string;
+  port?: number;
+  connectHost?: string;
+  serverPort?: number;
+  workspaceName?: string;
+}
+
+export interface DesktopDeployRemoteWorkspaceResult {
+  workspaceName: string;
+  wsUrl: string;
+  authToken: string;
+  serviceName: string;
+  remoteArch: "x64" | "arm64";
+  lingerEnabled: boolean | null;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
   pickFolder: () => Promise<string | null>;
@@ -134,6 +152,9 @@ export interface DesktopBridge {
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
   inspectRemoteTlsCertificate: (url: string) => Promise<DesktopRemoteTlsCertificateInspection>;
   trustRemoteTlsCertificate: (input: DesktopTrustRemoteTlsCertificateInput) => Promise<void>;
+  deployRemoteWorkspaceServer: (
+    input: DesktopDeployRemoteWorkspaceInput,
+  ) => Promise<DesktopDeployRemoteWorkspaceResult>;
 }
 
 export interface NativeApi {
@@ -188,6 +209,9 @@ export interface NativeApi {
     rotateWorkspaceTlsCertificate: () => Promise<ServerRotateWorkspaceTlsCertificateResult>;
     inspectRemoteTlsCertificate: (url: string) => Promise<DesktopRemoteTlsCertificateInspection>;
     trustRemoteTlsCertificate: (input: DesktopTrustRemoteTlsCertificateInput) => Promise<void>;
+    deployRemoteWorkspaceServer: (
+      input: DesktopDeployRemoteWorkspaceInput,
+    ) => Promise<DesktopDeployRemoteWorkspaceResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

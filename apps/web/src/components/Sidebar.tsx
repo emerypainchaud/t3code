@@ -266,6 +266,7 @@ function WorkspaceSwitcher(props: {
   onChange: (workspaceId: string) => void;
 }) {
   const connectionState = useWorkspaceConnectionState(props.activeWorkspaceId);
+  const statusLabel = workspaceStatusLabel(connectionState);
 
   return (
     <div className="w-full min-w-0">
@@ -279,7 +280,7 @@ function WorkspaceSwitcher(props: {
                 className={`flex items-center gap-1 text-[10px] ${workspaceStatusTextClassName(connectionState)}`}
               >
                 <span className={`size-1.5 rounded-full ${workspaceStatusDotClassName(connectionState)}`} />
-                <span>{workspaceStatusLabel(connectionState)}</span>
+                <span>{statusLabel}</span>
               </div>
             </div>
           </div>
@@ -299,7 +300,7 @@ function WorkspaceSwitcher(props: {
                   <span className="truncate">{workspace.name}</span>
                   {isActive && (
                     <span className={`ml-auto text-[10px] ${workspaceStatusTextClassName(connectionState)}`}>
-                      {workspaceStatusLabel(connectionState)}
+                      {statusLabel}
                     </span>
                   )}
                 </div>
@@ -308,6 +309,131 @@ function WorkspaceSwitcher(props: {
           })}
         </SelectPopup>
       </Select>
+    </div>
+  );
+}
+
+function ActiveWorkspaceBadge(props: {
+  activeWorkspaceId: string;
+  activeWorkspaceName: string;
+}) {
+  const connectionState = useWorkspaceConnectionState(props.activeWorkspaceId);
+  const statusLabel = workspaceStatusLabel(connectionState);
+
+  return (
+    <div className="drag-region-disabled flex min-w-0 items-center gap-2 rounded-full border border-border/80 bg-background/70 px-3 py-1.5">
+      <span className={`size-2 shrink-0 rounded-full ${workspaceStatusDotClassName(connectionState)}`} />
+      <span className="truncate text-xs font-medium text-foreground">{props.activeWorkspaceName}</span>
+      <span className="sr-only">{statusLabel}</span>
+    </div>
+  );
+}
+
+function WorkspacePager(props: {
+  readonly activeWorkspaceId: string;
+  readonly workspaceIdsAndNames: ReadonlyArray<{ id: string; name: string }>;
+  readonly onChange: (workspaceId: string) => void;
+  readonly onOpenWorkspaceSettings: () => void;
+}) {
+  const activeWorkspaceIndex = Math.max(
+    0,
+    props.workspaceIdsAndNames.findIndex((workspace) => workspace.id === props.activeWorkspaceId),
+  );
+  const pointerStartXRef = useRef<number | null>(null);
+  const swipeHandledRef = useRef(false);
+  const lastGestureAtRef = useRef(0);
+
+  const switchByOffset = useCallback(
+    (offset: number) => {
+      if (props.workspaceIdsAndNames.length <= 1 || offset === 0) {
+        return;
+      }
+
+      const nextIndex =
+        (activeWorkspaceIndex + offset + props.workspaceIdsAndNames.length) %
+        props.workspaceIdsAndNames.length;
+      const nextWorkspace = props.workspaceIdsAndNames[nextIndex];
+      if (nextWorkspace && nextWorkspace.id !== props.activeWorkspaceId) {
+        props.onChange(nextWorkspace.id);
+      }
+    },
+    [activeWorkspaceIndex, props],
+  );
+
+  const handleGesture = useCallback(
+    (deltaX: number) => {
+      const now = Date.now();
+      if (now - lastGestureAtRef.current < 180 || Math.abs(deltaX) < 36) {
+        return false;
+      }
+
+      lastGestureAtRef.current = now;
+      switchByOffset(deltaX < 0 ? 1 : -1);
+      return true;
+    },
+    [switchByOffset],
+  );
+
+  return (
+    <div className="drag-region-disabled flex items-center gap-3">
+      <div
+        className="flex min-w-0 flex-1 items-center justify-center gap-2 rounded-full border border-border/70 bg-background/60 px-3 py-2"
+        onPointerDown={(event) => {
+          pointerStartXRef.current = event.clientX;
+          swipeHandledRef.current = false;
+        }}
+        onPointerMove={(event) => {
+          if (pointerStartXRef.current === null || swipeHandledRef.current) {
+            return;
+          }
+
+          if (handleGesture(event.clientX - pointerStartXRef.current)) {
+            swipeHandledRef.current = true;
+          }
+        }}
+        onPointerUp={() => {
+          pointerStartXRef.current = null;
+          swipeHandledRef.current = false;
+        }}
+        onPointerCancel={() => {
+          pointerStartXRef.current = null;
+          swipeHandledRef.current = false;
+        }}
+        onWheel={(event) => {
+          if (Math.abs(event.deltaX) <= Math.abs(event.deltaY) || Math.abs(event.deltaX) < 14) {
+            return;
+          }
+
+          event.preventDefault();
+          handleGesture(event.deltaX);
+        }}
+      >
+        {props.workspaceIdsAndNames.map((workspace) => {
+          const isActive = workspace.id === props.activeWorkspaceId;
+          return (
+            <button
+              key={workspace.id}
+              type="button"
+              aria-label={`Switch to ${workspace.name}`}
+              aria-pressed={isActive}
+              className={`rounded-full transition-all ${
+                isActive
+                  ? "h-2.5 w-2.5 bg-foreground/80 shadow-[0_0_0_2px_color-mix(in_oklab,var(--color-background)_55%,transparent)]"
+                  : "h-2 w-2 bg-muted-foreground/28 hover:bg-muted-foreground/46"
+              }`}
+              onClick={() => props.onChange(workspace.id)}
+            />
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        aria-label="Add or manage workspaces"
+        className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-border/70 bg-background/70 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        onClick={props.onOpenWorkspaceSettings}
+      >
+        <PlusIcon className="size-4" />
+      </button>
     </div>
   );
 }
@@ -1066,14 +1192,10 @@ export default function Sidebar() {
           <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[82px]">
             <div className="flex min-w-0 flex-1 items-center gap-3">
               {wordmark}
-              <div className="drag-region-disabled min-w-0 flex-1">
-                <WorkspaceSwitcher
-                  activeWorkspaceId={activeWorkspace.id}
-                  activeWorkspaceName={activeWorkspace.name}
-                  workspaceIdsAndNames={workspaceOptions}
-                  onChange={(workspaceId) => updateSettings({ activeWorkspaceId: workspaceId })}
-                />
-              </div>
+              <ActiveWorkspaceBadge
+                activeWorkspaceId={activeWorkspace.id}
+                activeWorkspaceName={activeWorkspace.name}
+              />
             </div>
             {showDesktopUpdateButton && (
               <Tooltip>
@@ -1503,29 +1625,53 @@ export default function Sidebar() {
 
       <SidebarSeparator />
       <SidebarFooter className="p-2">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            {isOnSettings ? (
-              <SidebarMenuButton
-                size="sm"
-                className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-                onClick={() => window.history.back()}
-              >
-                <ArrowLeftIcon className="size-3.5" />
-                <span className="text-xs">Back</span>
-              </SidebarMenuButton>
-            ) : (
-              <SidebarMenuButton
-                size="sm"
-                className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-                onClick={() => void navigate({ to: "/settings" })}
-              >
-                <SettingsIcon className="size-3.5" />
-                <span className="text-xs">Settings</span>
-              </SidebarMenuButton>
-            )}
-          </SidebarMenuItem>
-        </SidebarMenu>
+        {isElectron ? (
+          isOnSettings ? (
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  size="sm"
+                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                  onClick={() => window.history.back()}
+                >
+                  <ArrowLeftIcon className="size-3.5" />
+                  <span className="text-xs">Back</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          ) : (
+            <WorkspacePager
+              activeWorkspaceId={activeWorkspace.id}
+              workspaceIdsAndNames={workspaceOptions}
+              onChange={(workspaceId) => updateSettings({ activeWorkspaceId: workspaceId })}
+              onOpenWorkspaceSettings={() => void navigate({ to: "/settings" })}
+            />
+          )
+        ) : (
+          <SidebarMenu>
+            <SidebarMenuItem>
+              {isOnSettings ? (
+                <SidebarMenuButton
+                  size="sm"
+                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                  onClick={() => window.history.back()}
+                >
+                  <ArrowLeftIcon className="size-3.5" />
+                  <span className="text-xs">Back</span>
+                </SidebarMenuButton>
+              ) : (
+                <SidebarMenuButton
+                  size="sm"
+                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                  onClick={() => void navigate({ to: "/settings" })}
+                >
+                  <SettingsIcon className="size-3.5" />
+                  <span className="text-xs">Settings</span>
+                </SidebarMenuButton>
+              )}
+            </SidebarMenuItem>
+          </SidebarMenu>
+        )}
       </SidebarFooter>
     </>
   );

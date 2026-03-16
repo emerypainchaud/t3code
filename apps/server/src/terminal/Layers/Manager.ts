@@ -493,14 +493,15 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
     return this.runWithThreadLock(input.threadId, async () => {
       await this.assertValidCwd(input.cwd);
 
-      const sessionKey = toSessionKey(input.threadId, input.terminalId);
+      const terminalId = DEFAULT_TERMINAL_ID;
+      const sessionKey = toSessionKey(input.threadId, terminalId);
       let session = this.sessions.get(sessionKey);
       if (!session) {
         const cols = input.cols ?? DEFAULT_OPEN_COLS;
         const rows = input.rows ?? DEFAULT_OPEN_ROWS;
         session = {
           threadId: input.threadId,
-          terminalId: input.terminalId,
+          terminalId,
           cwd: input.cwd,
           status: "starting",
           pid: null,
@@ -528,7 +529,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
       const rows = input.rows ?? session.rows;
 
       session.history = "";
-      await this.persistHistory(input.threadId, input.terminalId, session.history);
+      await this.persistHistory(input.threadId, terminalId, session.history);
       await this.startSession(session, { ...input, cols, rows }, "restarted");
       return this.snapshot(session);
     });

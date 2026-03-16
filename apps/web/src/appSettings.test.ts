@@ -117,8 +117,10 @@ describe("workspace settings", () => {
     const settings = {
       codexBinaryPath: "",
       codexHomePath: "",
+      defaultThreadEnvMode: "local" as const,
       confirmThreadDelete: true,
       enableAssistantStreaming: false,
+      timestampFormat: "locale" as const,
       codexServiceTier: "auto" as const,
       customCodexModels: [],
       customClaudeCodeModels: [],

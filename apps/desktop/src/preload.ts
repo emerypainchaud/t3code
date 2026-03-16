@@ -13,6 +13,7 @@ const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:inspect-remote-tls-certificate";
 const TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:trust-remote-tls-certificate";
+const DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL = "desktop:deploy-remote-workspace-server";
 const wsUrl = process.env.T3CODE_DESKTOP_WS_URL ?? null;
 
 contextBridge.exposeInMainWorld("desktopBridge", {
@@ -40,6 +41,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL, url),
   trustRemoteTlsCertificate: (input) =>
     ipcRenderer.invoke(TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL, input),
+  deployRemoteWorkspaceServer: (input) =>
+    ipcRenderer.invoke(DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL, input),
   onUpdateState: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, state: unknown) => {
       if (typeof state !== "object" || state === null) return;

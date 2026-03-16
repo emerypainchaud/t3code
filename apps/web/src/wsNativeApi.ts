@@ -279,6 +279,10 @@ export function createWsNativeApi(): NativeApi {
       createBranch: (input) => ensureTransport().request(WS_METHODS.gitCreateBranch, input),
       checkout: (input) => ensureTransport().request(WS_METHODS.gitCheckout, input),
       init: (input) => ensureTransport().request(WS_METHODS.gitInit, input),
+      resolvePullRequest: (input) =>
+        ensureTransport().request(WS_METHODS.gitResolvePullRequest, input),
+      preparePullRequestThread: (input) =>
+        ensureTransport().request(WS_METHODS.gitPreparePullRequestThread, input),
     },
     contextMenu: {
       show: async <T extends string>(
@@ -310,6 +314,12 @@ export function createWsNativeApi(): NativeApi {
         }
         await window.desktopBridge.trustRemoteTlsCertificate(input);
       },
+      deployRemoteWorkspaceServer: async (input) => {
+        if (!window.desktopBridge) {
+          throw new Error("Remote workspace deployment is only available in the desktop app.");
+        }
+        return window.desktopBridge.deployRemoteWorkspaceServer(input);
+      },
     },
     orchestration: {
       getSnapshot: () => ensureTransport().request(ORCHESTRATION_WS_METHODS.getSnapshot),
@@ -330,5 +340,8 @@ export function createWsNativeApi(): NativeApi {
     },
   };
 
+  if (!instance) {
+    throw new Error("WebSocket native API failed to initialize.");
+  }
   return instance;
 }

@@ -53,6 +53,15 @@ function createBaseServerConfig(): ServerConfig {
       },
     ],
     availableEditors: [],
+    workspaceAccess: {
+      token: "workspace-secret",
+      tokenSource: "generated",
+      loopbackBypassEnabled: true,
+      endpoints: [{ label: "Local", wsUrl: "ws://127.0.0.1:3773", scope: "local" }],
+      tls: {
+        mode: "disabled",
+      },
+    },
   };
 }
 
@@ -65,6 +74,9 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         title: "Project",
         workspaceRoot: "/repo/project",
         defaultModel: "gpt-5",
+        executionTarget: {
+          kind: "workspace-local",
+        },
         scripts: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -77,6 +89,9 @@ function createMinimalSnapshot(): OrchestrationReadModel {
         projectId: PROJECT_ID,
         title: "Test thread",
         model: "gpt-5",
+        executionTarget: {
+          kind: "workspace-local",
+        },
         interactionMode: "default",
         runtimeMode: "full-access",
         branch: "main",

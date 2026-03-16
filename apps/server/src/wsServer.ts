@@ -30,6 +30,8 @@ import {
   WS_METHODS,
   WebSocketRequest,
   WsPush,
+  type WsPushChannel,
+  type WsPushData,
   WsResponse,
 } from "@t3tools/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
@@ -520,6 +522,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   const clients = yield* Ref.make(new Set<WebSocket>());
+  const nextPushSequence = yield* Ref.make(0);
   const logger = createLogger("ws");
 
   function logOutgoingPush(push: WsPush, recipients: number) {
@@ -532,12 +535,23 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   }
 
   const encodePush = Schema.encodeEffect(Schema.fromJsonString(WsPush));
-  const broadcastPush = Effect.fnUntraced(function* (push: WsPush) {
+  const sendPush = Effect.fnUntraced(function* <C extends WsPushChannel>(
+    channel: C,
+    data: WsPushData<C>,
+    client?: WebSocket,
+  ) {
+    const push = {
+      type: "push" as const,
+      sequence: yield* Ref.updateAndGet(nextPushSequence, (sequence) => sequence + 1),
+      channel,
+      data,
+    } as WsPush;
     const message = yield* encodePush(push);
     let recipients = 0;
-    for (const client of yield* Ref.get(clients)) {
-      if (client.readyState === client.OPEN) {
-        client.send(message);
+    const targets = client ? [client] : Array.from(yield* Ref.get(clients));
+    for (const target of targets) {
+      if (target.readyState === target.OPEN) {
+        target.send(message);
         recipients += 1;
       }
     }
@@ -545,11 +559,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   const onTerminalEvent = Effect.fnUntraced(function* (event: TerminalEvent) {
-    yield* broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.terminalEvent,
-      data: event,
-    });
+    yield* sendPush(WS_CHANNELS.terminalEvent, event);
   });
 
   const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
@@ -908,21 +918,13 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-    broadcastPush({
-      type: "push",
-      channel: ORCHESTRATION_WS_CHANNELS.domainEvent,
-      data: event,
-    }),
+    sendPush(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
-  yield* Stream.runForEach(keybindingsManager.changes, (event) =>
-    broadcastPush({
-      type: "push",
-      channel: WS_CHANNELS.serverConfigUpdated,
-      data: {
-        issues: event.issues,
-        providers: providerStatuses,
-      },
+  yield* Stream.runForEach(keybindingsManager.streamChanges, (event) =>
+    sendPush(WS_CHANNELS.serverConfigUpdated, {
+      issues: event.issues,
+      providers: providerStatuses,
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
@@ -1106,6 +1108,16 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       case WS_METHODS.gitRunStackedAction: {
         const body = stripRequestTag(request.body);
         return yield* gitManager.runStackedAction(body);
+      }
+
+      case WS_METHODS.gitResolvePullRequest: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.resolvePullRequest(body);
+      }
+
+      case WS_METHODS.gitPreparePullRequestThread: {
+        const body = stripRequestTag(request.body);
+        return yield* gitManager.preparePullRequestThread(body);
       }
 
       case WS_METHODS.gitListBranches: {
@@ -1303,18 +1315,18 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
 
-    const welcome: WsPush = {
-      type: "push",
-      channel: WS_CHANNELS.serverWelcome,
-      data: {
-        cwd,
-        projectName,
-        ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
-        ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
-      },
-    };
-    logOutgoingPush(welcome, 1);
-    ws.send(JSON.stringify(welcome));
+    void runPromise(
+      sendPush(
+        WS_CHANNELS.serverWelcome,
+        {
+          cwd,
+          projectName,
+          ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
+          ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
+        },
+        ws,
+      ),
+    );
 
     ws.on("message", (raw) => {
       void runPromise(

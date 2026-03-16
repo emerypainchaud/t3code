@@ -1,11 +1,14 @@
 import { useCallback, useSyncExternalStore } from "react";
 import { Option, Schema } from "effect";
-import { type ProviderKind, type ProviderServiceTier } from "@t3tools/contracts";
+import { type ProviderKind } from "@t3tools/contracts";
 import { getDefaultModel, getModelOptions, normalizeModelSlug } from "@t3tools/shared/model";
 
 const APP_SETTINGS_STORAGE_KEY = "t3code:app-settings:v1";
 const MAX_CUSTOM_MODEL_COUNT = 32;
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
+export const TIMESTAMP_FORMAT_OPTIONS = ["locale", "12-hour", "24-hour"] as const;
+export type TimestampFormat = (typeof TIMESTAMP_FORMAT_OPTIONS)[number];
+export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
 export const LOCAL_WORKSPACE_ID = "local";
 const MAX_WORKSPACE_COUNT = 24;
 const MAX_WORKSPACE_FIELD_LENGTH = 4096;
@@ -51,9 +54,15 @@ const AppSettingsSchema = Schema.Struct({
   codexHomePath: Schema.String.check(Schema.isMaxLength(4096)).pipe(
     Schema.withConstructorDefault(() => Option.some("")),
   ),
+  defaultThreadEnvMode: Schema.Literals(["local", "worktree"]).pipe(
+    Schema.withConstructorDefault(() => Option.some("local")),
+  ),
   confirmThreadDelete: Schema.Boolean.pipe(Schema.withConstructorDefault(() => Option.some(true))),
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withConstructorDefault(() => Option.some(false)),
+  ),
+  timestampFormat: Schema.Literals(["locale", "12-hour", "24-hour"]).pipe(
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_TIMESTAMP_FORMAT)),
   ),
   codexServiceTier: AppServiceTierSchema.pipe(Schema.withConstructorDefault(() => Option.some("auto"))),
   customCodexModels: Schema.Array(Schema.String).pipe(
@@ -190,7 +199,7 @@ export function resolveActiveWorkspace(settings: AppSettings): AppWorkspace {
   );
 }
 
-export function resolveAppServiceTier(serviceTier: AppServiceTier): ProviderServiceTier | null {
+export function resolveAppServiceTier(serviceTier: AppServiceTier): "fast" | "flex" | null {
   return serviceTier === "auto" ? null : serviceTier;
 }
 

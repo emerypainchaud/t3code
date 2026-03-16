@@ -114,6 +114,83 @@ function toStatusPr(pr: GitReviewRequestSummary): {
   };
 }
 
+interface ResolvedPullRequest {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly baseBranch: string;
+  readonly headBranch: string;
+  readonly state: "open" | "closed" | "merged";
+}
+
+function normalizePullRequestReference(reference: string): string {
+  return reference.trim();
+}
+
+function normalizePullRequestState(value: unknown): "open" | "closed" | "merged" | null {
+  const normalized = typeof value === "string" ? value.trim().toLowerCase() : "";
+  if (normalized === "open" || normalized === "opened") return "open";
+  if (normalized === "closed") return "closed";
+  if (normalized === "merged") return "merged";
+  return null;
+}
+
+function parseResolvedPullRequest(raw: unknown): ResolvedPullRequest {
+  if (!raw || typeof raw !== "object") {
+    throw new Error("Pull request response is not an object.");
+  }
+
+  const record = raw as Record<string, unknown>;
+  const number =
+    typeof record.number === "number"
+      ? record.number
+      : typeof record.iid === "number"
+        ? record.iid
+        : null;
+  const title = typeof record.title === "string" ? record.title.trim() : "";
+  const url =
+    typeof record.url === "string"
+      ? record.url.trim()
+      : typeof record.web_url === "string"
+        ? record.web_url.trim()
+        : "";
+  const baseBranch =
+    typeof record.baseRefName === "string"
+      ? record.baseRefName.trim()
+      : typeof record.target_branch === "string"
+        ? record.target_branch.trim()
+        : "";
+  const headBranch =
+    typeof record.headRefName === "string"
+      ? record.headRefName.trim()
+      : typeof record.source_branch === "string"
+        ? record.source_branch.trim()
+        : "";
+  const state = normalizePullRequestState(record.state);
+
+  if (
+    number === null ||
+    !Number.isInteger(number) ||
+    number <= 0 ||
+    title.length === 0 ||
+    url.length === 0 ||
+    baseBranch.length === 0 ||
+    headBranch.length === 0 ||
+    state === null
+  ) {
+    throw new Error("Pull request response is missing required fields.");
+  }
+
+  return {
+    number,
+    title,
+    url,
+    baseBranch,
+    headBranch,
+    state,
+  };
+}
+
 export const makeGitManager = Effect.gen(function* () {
   const gitCore = yield* GitCore;
   const gitForgeCli = yield* GitForgeCli;
@@ -338,6 +415,42 @@ export const makeGitManager = Effect.gen(function* () {
       };
     });
 
+  const resolvePullRequestSummary = (cwd: string, reference: string) =>
+    Effect.gen(function* () {
+      const forge = yield* gitForgeCli.resolveForge({ cwd });
+      if (!forge) {
+        return yield* gitManagerError(
+          "resolvePullRequest",
+          "No supported Git forge is configured for this repository.",
+        );
+      }
+
+      const result = yield* gitForgeCli.execute({
+        forge,
+        cwd,
+        args:
+          forge === "github"
+            ? [
+                "pr",
+                "view",
+                reference,
+                "--json",
+                "number,title,url,baseRefName,headRefName,state",
+              ]
+            : ["mr", "view", reference, "--output", "json"],
+      });
+
+      return yield* Effect.try({
+        try: () => parseResolvedPullRequest(JSON.parse(result.stdout)),
+        catch: (cause) =>
+          gitManagerError(
+            "resolvePullRequest",
+            "Failed to parse review request metadata from the forge CLI.",
+            cause,
+          ),
+      });
+    });
+
   const status: GitManagerShape["status"] = Effect.fnUntraced(function* (input) {
     const details = yield* gitCore.statusDetails(input.cwd);
     const forge = yield* gitForgeCli.resolveForge({ cwd: input.cwd });
@@ -361,6 +474,92 @@ export const makeGitManager = Effect.gen(function* () {
       pr,
     };
   });
+
+  const resolvePullRequest: GitManagerShape["resolvePullRequest"] = Effect.fnUntraced(
+    function* (input) {
+      const pullRequest = yield* resolvePullRequestSummary(
+        input.cwd,
+        normalizePullRequestReference(input.reference),
+      );
+      return { pullRequest };
+    },
+  );
+
+  const preparePullRequestThread: GitManagerShape["preparePullRequestThread"] = Effect.fnUntraced(
+    function* (input) {
+      const pullRequest = yield* resolvePullRequestSummary(
+        input.cwd,
+        normalizePullRequestReference(input.reference),
+      );
+      const forge = yield* gitForgeCli.resolveForge({ cwd: input.cwd });
+      if (!forge) {
+        return yield* gitManagerError(
+          "preparePullRequestThread",
+          "No supported Git forge is configured for this repository.",
+        );
+      }
+
+      const materializeBranch =
+        forge === "github"
+          ? gitCore.fetchPullRequestBranch({
+              cwd: input.cwd,
+              prNumber: pullRequest.number,
+              branch: pullRequest.headBranch,
+            })
+          : gitCore.fetchRemoteBranch({
+              cwd: input.cwd,
+              remoteName: "origin",
+              remoteBranch: pullRequest.headBranch,
+              localBranch: pullRequest.headBranch,
+            });
+
+      if (input.mode === "local") {
+        yield* materializeBranch;
+        yield* Effect.scoped(
+          gitCore.checkoutBranch({
+            cwd: input.cwd,
+            branch: pullRequest.headBranch,
+          }),
+        );
+        const details = yield* gitCore.statusDetails(input.cwd);
+        return {
+          pullRequest,
+          branch: details.branch ?? pullRequest.headBranch,
+          worktreePath: null,
+        };
+      }
+
+      const existingBranch = yield* gitCore.listBranches({ cwd: input.cwd }).pipe(
+        Effect.map((result) =>
+          result.branches.find(
+            (branch) =>
+              !branch.isRemote &&
+              branch.name === pullRequest.headBranch &&
+              branch.worktreePath !== null,
+          ) ?? null,
+        ),
+      );
+      if (existingBranch?.worktreePath) {
+        return {
+          pullRequest,
+          branch: existingBranch.name,
+          worktreePath: existingBranch.worktreePath,
+        };
+      }
+
+      yield* materializeBranch;
+      const worktree = yield* gitCore.createWorktree({
+        cwd: input.cwd,
+        branch: pullRequest.headBranch,
+        path: null,
+      });
+      return {
+        pullRequest,
+        branch: worktree.worktree.branch,
+        worktreePath: worktree.worktree.path,
+      };
+    },
+  );
 
   const runFeatureBranchStep = (cwd: string, branch: string | null, commitMessage?: string) =>
     Effect.gen(function* () {
@@ -453,6 +652,8 @@ export const makeGitManager = Effect.gen(function* () {
 
   return {
     status,
+    resolvePullRequest,
+    preparePullRequestThread,
     runStackedAction,
   } satisfies GitManagerShape;
 });
