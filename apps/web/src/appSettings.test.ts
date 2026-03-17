@@ -10,6 +10,7 @@ import {
   resolveAppServiceTier,
   shouldShowFastTierIcon,
   resolveAppModelSelection,
+  resolveWorkspaceSshConnection,
 } from "./appSettings";
 
 describe("normalizeCustomModelSlugs", () => {
@@ -147,5 +148,60 @@ describe("workspace settings", () => {
         isLocal: false,
       }),
     );
+  });
+
+  it("prefers managed deployment SSH details when resolving workspace SSH access", () => {
+    expect(
+      resolveWorkspaceSshConnection({
+        isLocal: false,
+        wsUrl: "wss://remote.example.com",
+        deployment: {
+          host: "managed.example.com",
+          username: "deploy",
+          port: 2222,
+        },
+        ssh: {
+          host: "manual.example.com",
+          username: "manual",
+          port: 2200,
+        },
+      }),
+    ).toEqual({
+      host: "managed.example.com",
+      username: "deploy",
+      port: 2222,
+    });
+  });
+
+  it("uses manual workspace SSH settings when deployment metadata is absent", () => {
+    expect(
+      resolveWorkspaceSshConnection({
+        isLocal: false,
+        wsUrl: "wss://remote.example.com",
+        deployment: null,
+        ssh: {
+          host: "manual.example.com",
+          username: "manual",
+          port: 2200,
+        },
+      }),
+    ).toEqual({
+      host: "manual.example.com",
+      username: "manual",
+      port: 2200,
+    });
+  });
+
+  it("falls back to the workspace websocket hostname when no SSH metadata is stored", () => {
+    expect(
+      resolveWorkspaceSshConnection({
+        isLocal: false,
+        wsUrl: "wss://remote.example.com:3773",
+        deployment: null,
+        ssh: null,
+      }),
+    ).toEqual({
+      host: "remote.example.com",
+    });
   });
 });

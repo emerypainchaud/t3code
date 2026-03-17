@@ -50,12 +50,20 @@ const SavedWorkspaceDeploymentSchema = Schema.Struct({
 });
 export type SavedWorkspaceDeployment = typeof SavedWorkspaceDeploymentSchema.Type;
 
+const SavedWorkspaceSshSchema = Schema.Struct({
+  host: WorkspaceFieldSchema,
+  username: Schema.optional(WorkspaceFieldSchema),
+  port: Schema.optional(Schema.Number),
+});
+export type SavedWorkspaceSsh = typeof SavedWorkspaceSshSchema.Type;
+
 const SavedWorkspaceSchema = Schema.Struct({
   id: WorkspaceIdSchema,
   name: WorkspaceFieldSchema,
   wsUrl: WorkspaceFieldSchema,
   authToken: WorkspaceFieldSchema,
   deployment: Schema.optional(SavedWorkspaceDeploymentSchema),
+  ssh: Schema.optional(SavedWorkspaceSshSchema),
 });
 type SavedWorkspace = typeof SavedWorkspaceSchema.Type;
 
@@ -122,6 +130,7 @@ export interface AppWorkspace {
   authToken: string;
   isLocal: boolean;
   deployment: SavedWorkspaceDeployment | null;
+  ssh: SavedWorkspaceSsh | null;
 }
 
 function normalizeWorkspaceName(input: string, normalizedUrl: string): string {
@@ -184,6 +193,7 @@ function normalizeSavedWorkspaces(workspaces: readonly SavedWorkspace[]): SavedW
 
     seenIds.add(id);
     const deploymentHost = workspace.deployment?.host?.trim() ?? "";
+    const sshHost = workspace.ssh?.host?.trim() ?? "";
     normalized.push({
       id,
       name: normalizeWorkspaceName(workspace.name, wsUrl),
@@ -220,6 +230,20 @@ function normalizeSavedWorkspaces(workspaces: readonly SavedWorkspace[]): SavedW
             },
           }
         : {}),
+      ...(sshHost
+        ? {
+            ssh: {
+              host: sshHost,
+              ...(workspace.ssh?.username?.trim() ? { username: workspace.ssh.username.trim() } : {}),
+              ...(typeof workspace.ssh?.port === "number" &&
+              Number.isInteger(workspace.ssh.port) &&
+              workspace.ssh.port > 0 &&
+              workspace.ssh.port <= 65535
+                ? { port: workspace.ssh.port }
+                : {}),
+            },
+          }
+        : {}),
     });
 
     if (normalized.length >= MAX_WORKSPACE_COUNT) {
@@ -239,6 +263,7 @@ export function getAppWorkspaces(settings: AppSettings): AppWorkspace[] {
       authToken: "",
       isLocal: true,
       deployment: null,
+      ssh: null,
     },
     ...normalizeSavedWorkspaces(settings.workspaces).map((workspace) => ({
       id: workspace.id,
@@ -247,6 +272,7 @@ export function getAppWorkspaces(settings: AppSettings): AppWorkspace[] {
       authToken: workspace.authToken,
       isLocal: false as const,
       deployment: workspace.deployment ?? null,
+      ssh: workspace.ssh ?? null,
     })),
   ];
 }
@@ -262,8 +288,48 @@ export function resolveActiveWorkspace(settings: AppSettings): AppWorkspace {
       authToken: "",
       isLocal: true,
       deployment: null,
+      ssh: null,
     }
   );
+}
+
+export interface WorkspaceSshConnection {
+  host: string;
+  username?: string;
+  port?: number;
+}
+
+export function resolveWorkspaceSshConnection(
+  workspace: Pick<AppWorkspace, "isLocal" | "wsUrl" | "deployment" | "ssh">,
+): WorkspaceSshConnection | null {
+  if (workspace.isLocal) {
+    return null;
+  }
+
+  if (workspace.deployment?.host?.trim()) {
+    return {
+      host: workspace.deployment.host.trim(),
+      ...(workspace.deployment.username?.trim()
+        ? { username: workspace.deployment.username.trim() }
+        : {}),
+      ...(workspace.deployment.port !== undefined ? { port: workspace.deployment.port } : {}),
+    };
+  }
+
+  if (workspace.ssh?.host?.trim()) {
+    return {
+      host: workspace.ssh.host.trim(),
+      ...(workspace.ssh.username?.trim() ? { username: workspace.ssh.username.trim() } : {}),
+      ...(workspace.ssh.port !== undefined ? { port: workspace.ssh.port } : {}),
+    };
+  }
+
+  try {
+    const url = new URL(workspace.wsUrl);
+    return url.hostname.trim().length > 0 ? { host: url.hostname.trim() } : null;
+  } catch {
+    return null;
+  }
 }
 
 export function resolveAppServiceTier(serviceTier: AppServiceTier): "fast" | "flex" | null {

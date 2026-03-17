@@ -13,6 +13,7 @@ import { APP_DISPLAY_NAME } from "../branding";
 import { useAppSettings } from "../appSettings";
 import { Button } from "../components/ui/button";
 import { AnchoredToastProvider, ToastProvider, toastManager } from "../components/ui/toast";
+import { openInPreferredEditor } from "../editorPreferences";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
 import {
@@ -24,7 +25,6 @@ import {
   rehydrateTerminalStateStoreForActiveWorkspace,
   useTerminalStateStore,
 } from "../terminalStateStore";
-import { preferredTerminalEditor } from "../terminal-links";
 import { terminalRunningSubprocessFromEvent } from "../terminalActivity";
 import { onServerConfigUpdated, onServerWelcome } from "../wsNativeApi";
 import { providerQueryKeys } from "../lib/providerReactQuery";
@@ -279,7 +279,10 @@ function EventRouter() {
             void queryClient
               .ensureQueryData(serverConfigQueryOptions())
               .then((config) =>
-                api.shell.openInEditor(config.keybindingsConfigPath, preferredTerminalEditor()),
+                openInPreferredEditor(api, config.keybindingsConfigPath, {
+                  workspace: activeWorkspace,
+                  targetKind: "file",
+                }),
               )
               .catch((error) => {
                 toastManager.add({
@@ -301,7 +304,7 @@ function EventRouter() {
       unsubServerConfigUpdated();
     };
   }, [
-    activeWorkspace.id,
+    activeWorkspace,
     navigate,
     queryClient,
     removeOrphanedTerminalStates,

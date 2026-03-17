@@ -452,6 +452,40 @@ describe("wsNativeApi", () => {
     });
   });
 
+  it("forwards local SSH editor launch requests to the desktop bridge", async () => {
+    const openInLocalEditorViaSsh = vi.fn().mockResolvedValue({
+      opened: true,
+      message: "Opened in local editor.",
+    });
+    Object.defineProperty(getWindowForTest(), "desktopBridge", {
+      configurable: true,
+      writable: true,
+      value: {
+        openInLocalEditorViaSsh,
+      },
+    });
+
+    const { createWsNativeApi } = await import("./wsNativeApi");
+    const api = createWsNativeApi();
+    await api.shell.openInLocalEditorViaSsh({
+      editor: "vscode",
+      host: "bamboozler",
+      username: "epainchaud",
+      port: 22,
+      remotePath: "/srv/project",
+      targetKind: "directory",
+    });
+
+    expect(openInLocalEditorViaSsh).toHaveBeenCalledWith({
+      editor: "vscode",
+      host: "bamboozler",
+      username: "epainchaud",
+      port: 22,
+      remotePath: "/srv/project",
+      targetKind: "directory",
+    });
+  });
+
   it("forwards context menu metadata to desktop bridge", async () => {
     const showContextMenu = vi.fn().mockResolvedValue("delete");
     Object.defineProperty(getWindowForTest(), "desktopBridge", {

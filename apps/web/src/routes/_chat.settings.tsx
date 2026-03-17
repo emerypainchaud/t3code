@@ -25,14 +25,15 @@ import {
   LOCAL_WORKSPACE_ID,
   MAX_CUSTOM_MODEL_LENGTH,
   normalizeWorkspaceUrl,
+  resolveWorkspaceSshConnection,
   shouldShowFastTierIcon,
   useAppSettings,
 } from "../appSettings";
+import { openInPreferredEditor } from "../editorPreferences";
 import { isElectron } from "../env";
 import { useTheme } from "../hooks/useTheme";
 import { serverConfigQueryOptions, serverQueryKeys } from "../lib/serverReactQuery";
 import { ensureNativeApi } from "../nativeApi";
-import { preferredTerminalEditor } from "../terminal-links";
 import { validateWorkspaceTlsInspection } from "../workspaceTls";
 import { useWorkspaceConnectionState } from "../workspaceConnectionState";
 import {
@@ -151,6 +152,9 @@ function SettingsRouteView() {
   const [workspaceNameInput, setWorkspaceNameInput] = useState("");
   const [workspaceUrlInput, setWorkspaceUrlInput] = useState("");
   const [workspaceTokenInput, setWorkspaceTokenInput] = useState("");
+  const [workspaceSshHostInput, setWorkspaceSshHostInput] = useState("");
+  const [workspaceSshUsernameInput, setWorkspaceSshUsernameInput] = useState("");
+  const [workspaceSshPortInput, setWorkspaceSshPortInput] = useState("");
   const [workspaceError, setWorkspaceError] = useState<string | null>(null);
   const [workspaceCertificate, setWorkspaceCertificate] =
     useState<DesktopRemoteTlsCertificateInspection | null>(null);
@@ -317,6 +321,9 @@ function SettingsRouteView() {
       normalizedUrl: string;
       authToken: string;
       knownTlsFingerprintSha256?: string | null;
+      sshHost?: string;
+      sshUsername?: string;
+      sshPort?: number;
     }) => {
       if (
         settings.workspaces.some(
@@ -364,6 +371,15 @@ function SettingsRouteView() {
             name: input.name,
             wsUrl: input.normalizedUrl,
             authToken: input.authToken.trim(),
+            ...(input.sshHost
+              ? {
+                  ssh: {
+                    host: input.sshHost,
+                    ...(input.sshUsername ? { username: input.sshUsername } : {}),
+                    ...(input.sshPort !== undefined ? { port: input.sshPort } : {}),
+                  },
+                }
+              : {}),
           },
         ],
       });
@@ -599,11 +615,24 @@ function SettingsRouteView() {
       }
     }
 
+    const parsedSshPort = workspaceSshPortInput.trim();
+    const sshPort =
+      parsedSshPort.length > 0 ? Number.parseInt(parsedSshPort, 10) : null;
+    if (sshPort !== null && (!Number.isInteger(sshPort) || sshPort <= 0 || sshPort > 65535)) {
+      setWorkspaceError("SSH port must be between 1 and 65535.");
+      return;
+    }
+
     const normalizedName = workspaceNameInput.trim() || new URL(normalizedUrl).host;
     const didSave = await saveWorkspace({
       name: normalizedName,
       normalizedUrl,
       authToken: workspaceTokenInput.trim(),
+      ...(workspaceSshHostInput.trim() ? { sshHost: workspaceSshHostInput.trim() } : {}),
+      ...(workspaceSshUsernameInput.trim()
+        ? { sshUsername: workspaceSshUsernameInput.trim() }
+        : {}),
+      ...(sshPort !== null ? { sshPort } : {}),
     });
     if (!didSave) {
       return;
@@ -612,6 +641,9 @@ function SettingsRouteView() {
     setWorkspaceNameInput("");
     setWorkspaceUrlInput("");
     setWorkspaceTokenInput("");
+    setWorkspaceSshHostInput("");
+    setWorkspaceSshUsernameInput("");
+    setWorkspaceSshPortInput("");
     setWorkspaceCertificate(null);
     setWorkspaceCertificateMessage(null);
   }, [
@@ -622,6 +654,9 @@ function SettingsRouteView() {
     workspaceCertificateReady,
     workspaceNameInput,
     workspaceRequiresTlsTrust,
+    workspaceSshHostInput,
+    workspaceSshPortInput,
+    workspaceSshUsernameInput,
     workspaceTokenInput,
   ]);
 
@@ -682,8 +717,10 @@ function SettingsRouteView() {
     setOpenKeybindingsError(null);
     setIsOpeningKeybindings(true);
     const api = ensureNativeApi();
-    void api.shell
-      .openInEditor(keybindingsConfigPath, preferredTerminalEditor())
+    void openInPreferredEditor(api, keybindingsConfigPath, {
+      workspace: activeWorkspace,
+      targetKind: "file",
+    })
       .catch((error) => {
         setOpenKeybindingsError(
           error instanceof Error ? error.message : "Unable to open keybindings file.",
@@ -692,7 +729,7 @@ function SettingsRouteView() {
       .finally(() => {
         setIsOpeningKeybindings(false);
       });
-  }, [keybindingsConfigPath]);
+  }, [activeWorkspace, keybindingsConfigPath]);
 
   const addCustomModel = useCallback((provider: ProviderKind) => {
     const customModelInput = customModelInputByProvider[provider];
@@ -790,6 +827,7 @@ function SettingsRouteView() {
                       ? workspaceStatusDotClassName(activeWorkspaceConnectionState)
                       : "bg-zinc-400";
                     const managedDeployment = workspace.deployment;
+                    const sshConnection = resolveWorkspaceSshConnection(workspace);
                     const managedWorkspaceVersion = managedDeployment?.deployedVersion?.trim() || null;
                     const needsManagedUpdate =
                       !workspace.isLocal &&
@@ -855,6 +893,13 @@ function SettingsRouteView() {
                                 {desktopCurrentVersion && needsManagedUpdate
                                   ? `, desktop ${desktopCurrentVersion}`
                                   : ""}
+                              </p>
+                            )}
+                            {!workspace.isLocal && !managedDeployment && sshConnection && (
+                              <p className="text-[11px] text-muted-foreground/80">
+                                IDE over SSH via {sshConnection.username ? `${sshConnection.username}@` : ""}
+                                {sshConnection.host}
+                                {sshConnection.port !== undefined ? `:${sshConnection.port}` : ""}
                               </p>
                             )}
                           </div>
@@ -1207,6 +1252,43 @@ function SettingsRouteView() {
                         onChange={(event) => setWorkspaceTokenInput(event.target.value)}
                         placeholder="Paste the workspace key from the remote server"
                       />
+                    </div>
+                    <div className="mt-3 rounded-lg border border-border/80 bg-background/60 p-3">
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-foreground">SSH settings</p>
+                        <p className="text-xs text-muted-foreground">
+                          Optional. Add these when you want the desktop app to open this remote
+                          workspace in a local IDE over SSH.
+                        </p>
+                      </div>
+                      <div className="mt-3 grid gap-3 md:grid-cols-3">
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-muted-foreground">SSH host</label>
+                          <Input
+                            value={workspaceSshHostInput}
+                            onChange={(event) => setWorkspaceSshHostInput(event.target.value)}
+                            placeholder="remote-host"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-muted-foreground">
+                            SSH username
+                          </label>
+                          <Input
+                            value={workspaceSshUsernameInput}
+                            onChange={(event) => setWorkspaceSshUsernameInput(event.target.value)}
+                            placeholder="Optional"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-xs font-medium text-muted-foreground">SSH port</label>
+                          <Input
+                            value={workspaceSshPortInput}
+                            onChange={(event) => setWorkspaceSshPortInput(event.target.value)}
+                            placeholder="22"
+                          />
+                        </div>
+                      </div>
                     </div>
                     {normalizedWorkspaceUrl?.startsWith("wss://") && (
                       <div className="mt-3 rounded-lg border border-border/80 bg-background/60 p-3">

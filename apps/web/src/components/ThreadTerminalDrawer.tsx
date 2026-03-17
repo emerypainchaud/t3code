@@ -1,6 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
-import { type ProjectId, type ThreadId } from "@t3tools/contracts";
+import { type ProjectExecutionTarget, type ProjectId, type ThreadId } from "@t3tools/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -26,6 +26,7 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readNativeApi } from "~/nativeApi";
+import type { AppWorkspace } from "~/appSettings";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -112,6 +113,8 @@ interface TerminalViewportProps {
   projectId: ProjectId;
   terminalId: string;
   cwd: string;
+  workspace: AppWorkspace;
+  executionTarget?: ProjectExecutionTarget | null | undefined;
   runtimeEnv?: Record<string, string>;
   onSessionExited: () => void;
   focusRequestId: number;
@@ -125,6 +128,8 @@ function TerminalViewport({
   projectId,
   terminalId,
   cwd,
+  workspace,
+  executionTarget,
   runtimeEnv,
   onSessionExited,
   focusRequestId,
@@ -238,7 +243,11 @@ function TerminalViewport({
               }
 
               const target = resolvePathLinkTarget(match.text, cwd);
-              void openInPreferredEditor(api, target).catch((error) => {
+              void openInPreferredEditor(api, target, {
+                workspace,
+                executionTarget,
+                targetKind: "file",
+              }).catch((error) => {
                 writeSystemMessage(
                   latestTerminal,
                   error instanceof Error ? error.message : "Unable to open path",
@@ -395,7 +404,7 @@ function TerminalViewport({
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, projectId, runtimeEnv, terminalId, threadId]);
+  }, [cwd, executionTarget, projectId, runtimeEnv, terminalId, threadId, workspace]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -440,6 +449,8 @@ interface ThreadTerminalDrawerProps {
   threadId: ThreadId;
   projectId: ProjectId;
   cwd: string;
+  workspace: AppWorkspace;
+  executionTarget?: ProjectExecutionTarget | null | undefined;
   runtimeEnv?: Record<string, string>;
   height: number;
   terminalIds: string[];
@@ -490,6 +501,8 @@ export default function ThreadTerminalDrawer({
   threadId,
   projectId,
   cwd,
+  workspace,
+  executionTarget,
   runtimeEnv,
   height,
   terminalIds,
@@ -803,6 +816,8 @@ export default function ThreadTerminalDrawer({
                         projectId={projectId}
                         terminalId={terminalId}
                         cwd={cwd}
+                        workspace={workspace}
+                        executionTarget={executionTarget}
                         {...(runtimeEnv ? { runtimeEnv } : {})}
                         onSessionExited={() => onCloseTerminal(terminalId)}
                         focusRequestId={focusRequestId}
@@ -822,6 +837,8 @@ export default function ThreadTerminalDrawer({
                   projectId={projectId}
                   terminalId={resolvedActiveTerminalId}
                   cwd={cwd}
+                  workspace={workspace}
+                  executionTarget={executionTarget}
                   {...(runtimeEnv ? { runtimeEnv } : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   focusRequestId={focusRequestId}

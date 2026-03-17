@@ -144,8 +144,24 @@ export interface DesktopDeployRemoteWorkspaceResult {
   warnings: string[];
 }
 
+export interface DesktopOpenInLocalEditorViaSshInput {
+  editor: EditorId;
+  host: string;
+  username?: string;
+  port?: number;
+  remotePath: string;
+  targetKind: "file" | "directory";
+}
+
+export interface DesktopOpenInLocalEditorViaSshResult {
+  opened: boolean;
+  message: string;
+  command?: string;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
+  getLocalSshOpenEditors: () => EditorId[];
   getPersistedAppSettings: () => string | null;
   setPersistedAppSettings: (raw: string) => Promise<void>;
   onPersistedAppSettings: (listener: (raw: string | null) => void) => () => void;
@@ -167,6 +183,9 @@ export interface DesktopBridge {
   deployRemoteWorkspaceServer: (
     input: DesktopDeployRemoteWorkspaceInput,
   ) => Promise<DesktopDeployRemoteWorkspaceResult>;
+  openInLocalEditorViaSsh: (
+    input: DesktopOpenInLocalEditorViaSshInput,
+  ) => Promise<DesktopOpenInLocalEditorViaSshResult>;
 }
 
 export interface NativeApi {
@@ -190,6 +209,9 @@ export interface NativeApi {
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
+    openInLocalEditorViaSsh: (
+      input: DesktopOpenInLocalEditorViaSshInput,
+    ) => Promise<DesktopOpenInLocalEditorViaSshResult>;
     openExternal: (url: string) => Promise<void>;
   };
   git: {

@@ -1,4 +1,9 @@
-import type { GitStackedAction, GitStatusResult, ThreadId } from "@t3tools/contracts";
+import type {
+  GitStackedAction,
+  GitStatusResult,
+  ProjectExecutionTarget,
+  ThreadId,
+} from "@t3tools/contracts";
 import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -51,12 +56,16 @@ import {
   gitStatusQueryOptions,
   invalidateGitQueries,
 } from "~/lib/gitReactQuery";
-import { preferredTerminalEditor, resolvePathLinkTarget } from "~/terminal-links";
+import { openInPreferredEditor } from "~/editorPreferences";
+import { resolvePathLinkTarget } from "~/terminal-links";
 import { readNativeApi } from "~/nativeApi";
+import type { AppWorkspace } from "~/appSettings";
 
 interface GitActionsControlProps {
   gitCwd: string | null;
   activeThreadId: ThreadId | null;
+  workspace: AppWorkspace;
+  executionTarget?: ProjectExecutionTarget | null | undefined;
 }
 
 interface PendingDefaultBranchAction {
@@ -152,7 +161,12 @@ function GitQuickActionIcon({ quickAction }: { quickAction: GitQuickAction }) {
   return <InfoIcon className={iconClassName} />;
 }
 
-export default function GitActionsControl({ gitCwd, activeThreadId }: GitActionsControlProps) {
+export default function GitActionsControl({
+  gitCwd,
+  activeThreadId,
+  workspace,
+  executionTarget,
+}: GitActionsControlProps) {
   const threadToastData = useMemo(
     () => (activeThreadId ? { threadId: activeThreadId } : undefined),
     [activeThreadId],
@@ -589,7 +603,11 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         return;
       }
       const target = resolvePathLinkTarget(filePath, gitCwd);
-      void api.shell.openInEditor(target, preferredTerminalEditor()).catch((error) => {
+      void openInPreferredEditor(api, target, {
+        workspace,
+        executionTarget,
+        targetKind: "file",
+      }).catch((error) => {
         toastManager.add({
           type: "error",
           title: "Unable to open file",
@@ -598,7 +616,7 @@ export default function GitActionsControl({ gitCwd, activeThreadId }: GitActions
         });
       });
     },
-    [gitCwd, threadToastData],
+    [executionTarget, gitCwd, threadToastData, workspace],
   );
 
   if (!gitCwd) return null;

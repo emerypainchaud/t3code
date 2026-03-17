@@ -1,6 +1,9 @@
-import { EDITORS, EditorId, NativeApi } from "@t3tools/contracts";
+import type { NativeApi, ProjectExecutionTarget } from "@t3tools/contracts";
+import { EDITORS, EditorId } from "@t3tools/contracts";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "./hooks/useLocalStorage";
 import { useMemo } from "react";
+import type { AppWorkspace } from "./appSettings";
+import { openInEditorWithContext, resolveOpenInEditorOptions, type OpenInTargetKind } from "./remoteEditorOpen";
 
 const LAST_EDITOR_KEY = "t3code:last-editor";
 
@@ -26,10 +29,39 @@ export function resolveAndPersistPreferredEditor(
   return editor ?? null;
 }
 
-export async function openInPreferredEditor(api: NativeApi, targetPath: string): Promise<EditorId> {
+export interface PreferredEditorOpenContext {
+  workspace?: AppWorkspace;
+  executionTarget?: ProjectExecutionTarget | null | undefined;
+  targetKind?: OpenInTargetKind;
+}
+
+export async function openInPreferredEditor(
+  api: NativeApi,
+  targetPath: string,
+  context?: PreferredEditorOpenContext,
+): Promise<EditorId> {
   const { availableEditors } = await api.server.getConfig();
-  const editor = resolveAndPersistPreferredEditor(availableEditors);
+  const effectiveEditors =
+    context?.workspace !== undefined
+      ? resolveOpenInEditorOptions({
+          workspace: context.workspace,
+          executionTarget: context.executionTarget,
+          serverPath: targetPath,
+          availableEditors,
+        })
+      : [...availableEditors];
+  const editor = resolveAndPersistPreferredEditor(effectiveEditors);
   if (!editor) throw new Error("No available editors found.");
-  await api.shell.openInEditor(targetPath, editor);
+  if (context?.workspace) {
+    await openInEditorWithContext(api, editor, {
+      workspace: context.workspace,
+      executionTarget: context.executionTarget,
+      serverPath: targetPath,
+      targetKind: context.targetKind ?? "file",
+      availableEditors,
+    });
+  } else {
+    await api.shell.openInEditor(targetPath, editor);
+  }
   return editor;
 }

@@ -258,6 +258,12 @@ export function createWsNativeApi(): NativeApi {
     shell: {
       openInEditor: (cwd, editor) =>
         ensureTransport().request(WS_METHODS.shellOpenInEditor, { cwd, editor }),
+      openInLocalEditorViaSsh: async (input) => {
+        if (!window.desktopBridge) {
+          throw new Error("Local SSH editor open is only available in the desktop app.");
+        }
+        return window.desktopBridge.openInLocalEditorViaSsh(input);
+      },
       openExternal: async (url) => {
         if (window.desktopBridge) {
           const opened = await window.desktopBridge.openExternal(url);

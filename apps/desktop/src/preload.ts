@@ -14,6 +14,8 @@ const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:inspect-remote-tls-certificate";
 const TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:trust-remote-tls-certificate";
 const DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL = "desktop:deploy-remote-workspace-server";
+const OPEN_IN_LOCAL_EDITOR_VIA_SSH_CHANNEL = "desktop:open-in-local-editor-via-ssh";
+const GET_LOCAL_SSH_OPEN_EDITORS_CHANNEL = "desktop:get-local-ssh-open-editors";
 const APP_SETTINGS_GET_CHANNEL = "desktop:app-settings-get";
 const APP_SETTINGS_SET_CHANNEL = "desktop:app-settings-set";
 const APP_SETTINGS_CHANGED_CHANNEL = "desktop:app-settings-changed";
@@ -22,6 +24,10 @@ let persistedAppSettings = ipcRenderer.sendSync(APP_SETTINGS_GET_CHANNEL) as str
 
 contextBridge.exposeInMainWorld("desktopBridge", {
   getWsUrl: () => wsUrl,
+  getLocalSshOpenEditors: () =>
+    ipcRenderer.sendSync(GET_LOCAL_SSH_OPEN_EDITORS_CHANNEL) as ReturnType<
+      DesktopBridge["getLocalSshOpenEditors"]
+    >,
   getPersistedAppSettings: () => persistedAppSettings,
   setPersistedAppSettings: async (raw) => {
     persistedAppSettings = raw;
@@ -52,6 +58,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL, input),
   deployRemoteWorkspaceServer: (input) =>
     ipcRenderer.invoke(DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL, input),
+  openInLocalEditorViaSsh: (input) =>
+    ipcRenderer.invoke(OPEN_IN_LOCAL_EDITOR_VIA_SSH_CHANNEL, input),
   onPersistedAppSettings: (listener) => {
     const wrappedListener = (_event: Electron.IpcRendererEvent, raw: unknown) => {
       if (raw !== null && typeof raw !== "string") return;

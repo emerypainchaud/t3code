@@ -1,5 +1,6 @@
 import {
   type EditorId,
+  type ProjectExecutionTarget,
   type ProjectScript,
   type ResolvedKeybindingsConfig,
   type ThreadId,
@@ -13,6 +14,7 @@ import ProjectScriptsControl, { type NewProjectScriptInput } from "../ProjectScr
 import { Toggle } from "../ui/toggle";
 import { SidebarTrigger } from "../ui/sidebar";
 import { OpenInPicker } from "./OpenInPicker";
+import type { AppWorkspace } from "~/appSettings";
 
 interface ChatHeaderProps {
   activeThreadId: ThreadId;
@@ -20,6 +22,8 @@ interface ChatHeaderProps {
   activeProjectName: string | undefined;
   isGitRepo: boolean;
   openInCwd: string | null;
+  openInWorkspace: AppWorkspace;
+  openInExecutionTarget?: ProjectExecutionTarget | null | undefined;
   activeProjectScripts: ProjectScript[] | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
@@ -40,6 +44,8 @@ export const ChatHeader = memo(function ChatHeader({
   activeProjectName,
   isGitRepo,
   openInCwd,
+  openInWorkspace,
+  openInExecutionTarget,
   activeProjectScripts,
   preferredScriptId,
   keybindings,
@@ -91,9 +97,19 @@ export const ChatHeader = memo(function ChatHeader({
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
+            workspace={openInWorkspace}
+            executionTarget={openInExecutionTarget}
+            targetKind="directory"
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {activeProjectName && (
+          <GitActionsControl
+            gitCwd={gitCwd}
+            activeThreadId={activeThreadId}
+            workspace={openInWorkspace}
+            executionTarget={openInExecutionTarget}
+          />
+        )}
         <Tooltip>
           <TooltipTrigger
             render={

@@ -1,13 +1,13 @@
 import {
   type ApprovalRequestId,
   DEFAULT_MODEL_BY_PROVIDER,
-  EDITORS,
   type EditorId,
   type KeybindingCommand,
   type CodexReasoningEffort,
   type MessageId,
   type ProjectId,
   type ProjectEntry,
+  type ProjectExecutionTarget,
   type ProjectScript,
   type ModelSlug,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
@@ -212,9 +212,12 @@ import {
   resolveAppModelSelection,
   resolveAppServiceTier,
   shouldShowFastTierIcon,
+  type AppWorkspace,
   type AppServiceTier,
   useAppSettings,
 } from "../appSettings";
+import { usePreferredEditor } from "../editorPreferences";
+import { openInEditorWithContext, resolveOpenInEditorOptions } from "../remoteEditorOpen";
 import {
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -256,7 +259,6 @@ function formatWorkingTimer(startIso: string, endIso: string): string | null {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-const LAST_EDITOR_KEY = "t3code:last-editor";
 const LAST_INVOKED_SCRIPT_BY_PROJECT_KEY = "t3code:last-invoked-script-by-project";
 const MAX_VISIBLE_WORK_LOG_ENTRIES = 6;
 const ALWAYS_UNVIRTUALIZED_TAIL_ROWS = 8;
@@ -593,7 +595,7 @@ export default function ChatView({ threadId }: ChatViewProps) {
   const syncServerReadModel = useStore((store) => store.syncServerReadModel);
   const setStoreThreadError = useStore((store) => store.setError);
   const setStoreThreadBranch = useStore((store) => store.setThreadBranch);
-  const { settings } = useAppSettings();
+  const { settings, activeWorkspace } = useAppSettings();
   const navigate = useNavigate();
   const rawSearch = useSearch({
     strict: false,
@@ -3490,6 +3492,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
           activeProjectName={activeProject?.name}
           isGitRepo={isGitRepo}
           openInCwd={gitCwd ?? activeProjectExecutionCwd}
+          openInWorkspace={activeWorkspace}
+          openInExecutionTarget={activeThread.executionTarget}
           activeProjectScripts={activeProject?.scripts}
           preferredScriptId={
             activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
@@ -4043,6 +4047,8 @@ export default function ChatView({ threadId }: ChatViewProps) {
             threadId={activeThread.id}
             projectId={activeProject.id}
             cwd={gitCwd ?? activeProjectExecutionCwd ?? activeProject.cwd}
+            workspace={activeWorkspace}
+            executionTarget={activeThread.executionTarget}
             runtimeEnv={threadTerminalRuntimeEnv}
             height={terminalState.terminalHeight}
             terminalIds={terminalState.terminalIds}
@@ -4139,6 +4145,8 @@ interface ChatHeaderProps {
   activeProjectName: string | undefined;
   isGitRepo: boolean;
   openInCwd: string | null;
+  openInWorkspace: AppWorkspace;
+  openInExecutionTarget?: ProjectExecutionTarget | null | undefined;
   activeProjectScripts: ProjectScript[] | undefined;
   preferredScriptId: string | null;
   keybindings: ResolvedKeybindingsConfig;
@@ -4159,6 +4167,8 @@ const ChatHeader = memo(function ChatHeader({
   activeProjectName,
   isGitRepo,
   openInCwd,
+  openInWorkspace,
+  openInExecutionTarget,
   activeProjectScripts,
   preferredScriptId,
   keybindings,
@@ -4210,9 +4220,19 @@ const ChatHeader = memo(function ChatHeader({
             keybindings={keybindings}
             availableEditors={availableEditors}
             openInCwd={openInCwd}
+            workspace={openInWorkspace}
+            executionTarget={openInExecutionTarget}
+            targetKind="directory"
           />
         )}
-        {activeProjectName && <GitActionsControl gitCwd={gitCwd} activeThreadId={activeThreadId} />}
+        {activeProjectName && (
+          <GitActionsControl
+            gitCwd={gitCwd}
+            activeThreadId={activeThreadId}
+            workspace={openInWorkspace}
+            executionTarget={openInExecutionTarget}
+          />
+        )}
         <Tooltip>
           <TooltipTrigger
             render={
@@ -5797,17 +5817,30 @@ const CodexTraitsPicker = memo(function CodexTraitsPicker(props: {
 
 const OpenInPicker = memo(function OpenInPicker({
   keybindings,
-  availableEditors,
-  openInCwd,
+  availableEditors: serverAvailableEditors,
+  openInCwd: serverPath,
+  workspace,
+  executionTarget,
+  targetKind,
 }: {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  workspace: AppWorkspace;
+  executionTarget?: ProjectExecutionTarget | null | undefined;
+  targetKind: "file" | "directory";
 }) {
-  const [lastEditor, setLastEditor] = useState<EditorId>(() => {
-    const stored = localStorage.getItem(LAST_EDITOR_KEY);
-    return EDITORS.some((e) => e.id === stored) ? (stored as EditorId) : EDITORS[0].id;
-  });
+  const availableEditors = useMemo(
+    () =>
+      resolveOpenInEditorOptions({
+        workspace,
+        executionTarget,
+        serverPath,
+        availableEditors: serverAvailableEditors,
+      }),
+    [executionTarget, serverAvailableEditors, serverPath, workspace],
+  );
+  const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
 
   const allOptions = useMemo<Array<{ label: string; Icon: Icon; value: EditorId }>>(
     () => [
@@ -5843,22 +5876,31 @@ const OpenInPicker = memo(function OpenInPicker({
     [allOptions, availableEditors],
   );
 
-  const effectiveEditor = options.some((option) => option.value === lastEditor)
-    ? lastEditor
-    : (options[0]?.value ?? null);
-  const primaryOption = options.find(({ value }) => value === effectiveEditor) ?? null;
+  const effectiveEditor = preferredEditor;
+  const primaryOption = options.find(({ value }) => value === preferredEditor) ?? null;
 
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
       const api = readNativeApi();
-      if (!api || !openInCwd) return;
+      if (!api || !serverPath) return;
       const editor = editorId ?? effectiveEditor;
       if (!editor) return;
-      void api.shell.openInEditor(openInCwd, editor);
-      localStorage.setItem(LAST_EDITOR_KEY, editor);
-      setLastEditor(editor);
+      void openInEditorWithContext(api, editor, {
+        workspace,
+        executionTarget,
+        serverPath,
+        targetKind,
+        availableEditors: serverAvailableEditors,
+      }).catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to open in editor",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
+      setPreferredEditor(editor);
     },
-    [effectiveEditor, openInCwd, setLastEditor],
+    [effectiveEditor, executionTarget, serverAvailableEditors, serverPath, setPreferredEditor, targetKind, workspace],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -5870,22 +5912,34 @@ const OpenInPicker = memo(function OpenInPicker({
     const handler = (e: globalThis.KeyboardEvent) => {
       const api = readNativeApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!api || !openInCwd) return;
+      if (!api || !serverPath) return;
       if (!effectiveEditor) return;
 
       e.preventDefault();
-      void api.shell.openInEditor(openInCwd, effectiveEditor);
+      void openInEditorWithContext(api, effectiveEditor, {
+        workspace,
+        executionTarget,
+        serverPath,
+        targetKind,
+        availableEditors: serverAvailableEditors,
+      }).catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to open in editor",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [effectiveEditor, keybindings, openInCwd]);
+  }, [effectiveEditor, executionTarget, keybindings, serverAvailableEditors, serverPath, targetKind, workspace]);
 
   return (
     <Group aria-label="Subscription actions">
       <Button
         size="xs"
         variant="outline"
-        disabled={!effectiveEditor || !openInCwd}
+        disabled={!effectiveEditor || !serverPath}
         onClick={() => openInEditor(effectiveEditor)}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}

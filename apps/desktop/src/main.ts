@@ -52,6 +52,7 @@ import {
   readPersistedAppSettingsRaw,
   writePersistedAppSettingsRaw,
 } from "./appSettingsPersistence";
+import { getAvailableLocalSshOpenEditors, openInLocalEditorViaSsh } from "./localEditorOpen";
 
 fixPath();
 
@@ -67,6 +68,8 @@ const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
 const INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:inspect-remote-tls-certificate";
 const TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:trust-remote-tls-certificate";
 const DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL = "desktop:deploy-remote-workspace-server";
+const OPEN_IN_LOCAL_EDITOR_VIA_SSH_CHANNEL = "desktop:open-in-local-editor-via-ssh";
+const GET_LOCAL_SSH_OPEN_EDITORS_CHANNEL = "desktop:get-local-ssh-open-editors";
 const APP_SETTINGS_GET_CHANNEL = "desktop:app-settings-get";
 const APP_SETTINGS_SET_CHANNEL = "desktop:app-settings-set";
 const APP_SETTINGS_CHANGED_CHANNEL = "desktop:app-settings-changed";
@@ -1245,6 +1248,30 @@ function registerIpcHandlers(): void {
       return remoteWorkspaceDeploymentController.deploy(input);
     },
   );
+
+  ipcMain.removeHandler(OPEN_IN_LOCAL_EDITOR_VIA_SSH_CHANNEL);
+  ipcMain.handle(OPEN_IN_LOCAL_EDITOR_VIA_SSH_CHANNEL, async (_event, input: unknown) => {
+    if (!input || typeof input !== "object") {
+      throw new Error("Local SSH editor launch input is required.");
+    }
+    if (
+      typeof (input as { editor?: unknown }).editor !== "string" ||
+      typeof (input as { host?: unknown }).host !== "string" ||
+      typeof (input as { remotePath?: unknown }).remotePath !== "string" ||
+      ((input as { targetKind?: unknown }).targetKind !== "file" &&
+        (input as { targetKind?: unknown }).targetKind !== "directory")
+    ) {
+      throw new Error("Local SSH editor launch input is invalid.");
+    }
+    return openInLocalEditorViaSsh(
+      input as Parameters<typeof openInLocalEditorViaSsh>[0],
+    );
+  });
+
+  ipcMain.removeAllListeners(GET_LOCAL_SSH_OPEN_EDITORS_CHANNEL);
+  ipcMain.on(GET_LOCAL_SSH_OPEN_EDITORS_CHANNEL, (event) => {
+    event.returnValue = getAvailableLocalSshOpenEditors();
+  });
 }
 
 function getIconOption(): { icon: string } | Record<string, never> {
