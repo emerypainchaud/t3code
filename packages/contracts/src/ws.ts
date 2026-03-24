@@ -35,7 +35,15 @@ import {
   TerminalWriteInput,
 } from "./terminal";
 import { KeybindingRule } from "./keybindings";
-import { ProjectSearchEntriesInput, ProjectWriteFileInput } from "./project";
+import {
+  ProjectCreateDirectoryInput,
+  ProjectListDirectoryInput,
+  ProjectSshCreateDirectoryInput,
+  ProjectSshDirectoryListInput,
+  ProjectSshPreflightInput,
+  ProjectSearchEntriesInput,
+  ProjectWriteFileInput,
+} from "./project";
 import { OpenInEditorInput } from "./editor";
 import { ServerConfigUpdatedPayload } from "./server";
 
@@ -46,6 +54,11 @@ export const WS_METHODS = {
   projectsList: "projects.list",
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
+  projectsListDirectory: "projects.listDirectory",
+  projectsCreateDirectory: "projects.createDirectory",
+  projectsSshListDirectory: "projects.sshListDirectory",
+  projectsSshCreateDirectory: "projects.sshCreateDirectory",
+  projectsSshPreflight: "projects.sshPreflight",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
 
@@ -76,6 +89,8 @@ export const WS_METHODS = {
   // Server meta
   serverGetConfig: "server.getConfig",
   serverUpsertKeybinding: "server.upsertKeybinding",
+  serverRotateWorkspaceAccessToken: "server.rotateWorkspaceAccessToken",
+  serverRotateWorkspaceTlsCertificate: "server.rotateWorkspaceTlsCertificate",
 } as const;
 
 // ── Push Event Channels ──────────────────────────────────────────────
@@ -111,6 +126,11 @@ const WebSocketRequestBody = Schema.Union([
   tagRequestBody(ORCHESTRATION_WS_METHODS.replayEvents, OrchestrationReplayEventsInput),
 
   // Project Search
+  tagRequestBody(WS_METHODS.projectsListDirectory, ProjectListDirectoryInput),
+  tagRequestBody(WS_METHODS.projectsCreateDirectory, ProjectCreateDirectoryInput),
+  tagRequestBody(WS_METHODS.projectsSshListDirectory, ProjectSshDirectoryListInput),
+  tagRequestBody(WS_METHODS.projectsSshCreateDirectory, ProjectSshCreateDirectoryInput),
+  tagRequestBody(WS_METHODS.projectsSshPreflight, ProjectSshPreflightInput),
   tagRequestBody(WS_METHODS.projectsSearchEntries, ProjectSearchEntriesInput),
   tagRequestBody(WS_METHODS.projectsWriteFile, ProjectWriteFileInput),
 
@@ -141,6 +161,8 @@ const WebSocketRequestBody = Schema.Union([
   // Server meta
   tagRequestBody(WS_METHODS.serverGetConfig, Schema.Struct({})),
   tagRequestBody(WS_METHODS.serverUpsertKeybinding, KeybindingRule),
+  tagRequestBody(WS_METHODS.serverRotateWorkspaceAccessToken, Schema.Struct({})),
+  tagRequestBody(WS_METHODS.serverRotateWorkspaceTlsCertificate, Schema.Struct({})),
 ]);
 
 export const WebSocketRequest = Schema.Struct({

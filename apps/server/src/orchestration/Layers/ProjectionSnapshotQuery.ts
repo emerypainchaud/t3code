@@ -6,6 +6,7 @@ import {
   OrchestrationCheckpointFile,
   OrchestrationProposedPlanId,
   OrchestrationReadModel,
+  ProjectExecutionTarget,
   ProjectScript,
   ThreadId,
   TurnId,
@@ -45,6 +46,7 @@ import {
 const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
 const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
   Struct.assign({
+    executionTarget: Schema.fromJsonString(ProjectExecutionTarget),
     scripts: Schema.fromJsonString(Schema.Array(ProjectScript)),
   }),
 );
@@ -55,7 +57,11 @@ const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   }),
 );
 const ProjectionThreadProposedPlanDbRowSchema = ProjectionThreadProposedPlan;
-const ProjectionThreadDbRowSchema = ProjectionThread;
+const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
+  Struct.assign({
+    executionTarget: Schema.fromJsonString(ProjectExecutionTarget),
+  }),
+);
 const ProjectionThreadActivityDbRowSchema = ProjectionThreadActivity.mapFields(
   Struct.assign({
     payload: Schema.fromJsonString(Schema.Unknown),
@@ -142,6 +148,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title,
           workspace_root AS "workspaceRoot",
           default_model AS "defaultModel",
+          execution_target_json AS "executionTarget",
           scripts_json AS "scripts",
           created_at AS "createdAt",
           updated_at AS "updatedAt",
@@ -159,6 +166,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          execution_target_json AS "executionTarget",
           title,
           model,
           runtime_mode AS "runtimeMode",
@@ -536,6 +544,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             title: row.title,
             workspaceRoot: row.workspaceRoot,
             defaultModel: row.defaultModel,
+            executionTarget: row.executionTarget,
             scripts: row.scripts,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
@@ -545,6 +554,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           const threads: Array<OrchestrationThread> = threadRows.map((row) => ({
             id: row.threadId,
             projectId: row.projectId,
+            executionTarget: row.executionTarget,
             title: row.title,
             model: row.model,
             runtimeMode: row.runtimeMode,

@@ -473,7 +473,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("returns ready when claude is installed and authenticated", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus;
-        assert.strictEqual(status.provider, "claudeAgent");
+        assert.strictEqual(status.provider, "claudeCode");
         assert.strictEqual(status.status, "ready");
         assert.strictEqual(status.available, true);
         assert.strictEqual(status.authStatus, "authenticated");
@@ -497,7 +497,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("returns unavailable when claude is missing", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus;
-        assert.strictEqual(status.provider, "claudeAgent");
+        assert.strictEqual(status.provider, "claudeCode");
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.available, false);
         assert.strictEqual(status.authStatus, "unknown");
@@ -511,7 +511,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("returns error when version check fails with non-zero exit code", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus;
-        assert.strictEqual(status.provider, "claudeAgent");
+        assert.strictEqual(status.provider, "claudeCode");
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.available, false);
       }).pipe(
@@ -529,7 +529,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("returns unauthenticated when auth status reports not logged in", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus;
-        assert.strictEqual(status.provider, "claudeAgent");
+        assert.strictEqual(status.provider, "claudeCode");
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.available, true);
         assert.strictEqual(status.authStatus, "unauthenticated");
@@ -557,7 +557,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("returns unauthenticated when output includes 'not logged in'", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus;
-        assert.strictEqual(status.provider, "claudeAgent");
+        assert.strictEqual(status.provider, "claudeCode");
         assert.strictEqual(status.status, "error");
         assert.strictEqual(status.available, true);
         assert.strictEqual(status.authStatus, "unauthenticated");
@@ -576,7 +576,7 @@ it.layer(NodeServices.layer)("ProviderHealth", (it) => {
     it.effect("returns warning when auth status command is unsupported", () =>
       Effect.gen(function* () {
         const status = yield* checkClaudeProviderStatus;
-        assert.strictEqual(status.provider, "claudeAgent");
+        assert.strictEqual(status.provider, "claudeCode");
         assert.strictEqual(status.status, "warning");
         assert.strictEqual(status.available, true);
         assert.strictEqual(status.authStatus, "unknown");

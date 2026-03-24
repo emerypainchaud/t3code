@@ -4,6 +4,10 @@ import path from "node:path";
 import { runProcess } from "./processRunner";
 
 import {
+  ProjectCreateDirectoryInput,
+  ProjectDirectoryEntry,
+  ProjectListDirectoryInput,
+  ProjectListDirectoryResult,
   ProjectEntry,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
@@ -537,6 +541,60 @@ async function getWorkspaceIndex(cwd: string): Promise<WorkspaceIndex> {
 export function clearWorkspaceIndexCache(cwd: string): void {
   workspaceIndexCache.delete(cwd);
   inFlightWorkspaceIndexBuilds.delete(cwd);
+}
+
+function compareDirectoryEntries(
+  left: ProjectDirectoryEntry,
+  right: ProjectDirectoryEntry,
+): number {
+  return left.name.localeCompare(right.name, undefined, { sensitivity: "base" });
+}
+
+export async function listWorkspaceDirectory(
+  input: ProjectListDirectoryInput,
+): Promise<ProjectListDirectoryResult> {
+  const directoryPath = path.resolve(input.path);
+  const directoryStat = await fs.stat(directoryPath);
+  if (!directoryStat.isDirectory()) {
+    throw new Error(`Path is not a directory: ${directoryPath}`);
+  }
+
+  const dirents = await fs.readdir(directoryPath, { withFileTypes: true });
+  const limit = Math.max(1, Math.floor(input.limit));
+  const entries: ProjectDirectoryEntry[] = [];
+
+  for (const dirent of dirents) {
+    if (!dirent.isDirectory()) {
+      continue;
+    }
+    const entryPath = path.join(directoryPath, dirent.name);
+    entries.push({
+      name: dirent.name,
+      path: entryPath,
+      ...(entryPath !== directoryPath ? { parentPath: directoryPath } : {}),
+    });
+  }
+
+  entries.sort(compareDirectoryEntries);
+
+  return {
+    directoryPath,
+    parentPath: path.dirname(directoryPath) === directoryPath ? null : path.dirname(directoryPath),
+    entries: entries.slice(0, limit),
+    truncated: entries.length > limit,
+  };
+}
+
+export async function createWorkspaceDirectory(
+  input: ProjectCreateDirectoryInput,
+): Promise<ProjectListDirectoryResult> {
+  const directoryPath = path.resolve(input.path);
+  const targetPath = path.join(directoryPath, input.name);
+  await fs.mkdir(targetPath, { recursive: true });
+  return listWorkspaceDirectory({
+    path: targetPath,
+    limit: 200,
+  });
 }
 
 export async function searchWorkspaceEntries(

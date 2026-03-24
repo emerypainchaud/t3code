@@ -1,7 +1,7 @@
 import {
-  ProviderKind,
   type ClaudeCodeEffort,
   type ClaudeModelOptions,
+  type ProviderModelOptions,
   type ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -15,7 +15,7 @@ import {
   supportsClaudeUltrathinkKeyword,
   isClaudeUltrathinkPrompt,
 } from "@t3tools/shared/model";
-import { memo, useCallback, useState } from "react";
+import { memo, useState } from "react";
 import { ChevronDownIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import {
@@ -28,8 +28,6 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { useComposerDraftStore, useComposerThreadDraft } from "../../composerDraftStore";
-
-const PROVIDER = "claudeAgent" as const satisfies ProviderKind;
 
 const CLAUDE_EFFORT_LABELS: Record<ClaudeCodeEffort, string> = {
   low: "Low",
@@ -53,12 +51,12 @@ function getSelectedClaudeTraits(
   ultrathinkPromptControlled: boolean;
   supportsFastMode: boolean;
 } {
-  const options = getReasoningEffortOptions(PROVIDER, model);
-  const defaultReasoningEffort = getDefaultReasoningEffort(PROVIDER) as Exclude<
+  const options = getReasoningEffortOptions("claudeCode", model);
+  const defaultReasoningEffort = getDefaultReasoningEffort("claudeCode") as Exclude<
     ClaudeCodeEffort,
     "ultrathink"
   >;
-  const resolvedEffort = resolveReasoningEffortForProvider(PROVIDER, modelOptions?.effort);
+  const resolvedEffort = resolveReasoningEffortForProvider("claudeCode", modelOptions?.effort);
   const effort =
     resolvedEffort && resolvedEffort !== "ultrathink" && options.includes(resolvedEffort)
       ? resolvedEffort
@@ -80,21 +78,15 @@ function getSelectedClaudeTraits(
   };
 }
 
-interface ClaudeTraitsMenuContentProps {
+function ClaudeTraitsMenuContentImpl(props: {
   threadId: ThreadId;
   model: string | null | undefined;
   onPromptChange: (prompt: string) => void;
-}
-
-export const ClaudeTraitsMenuContent = memo(function ClaudeTraitsMenuContentImpl({
-  threadId,
-  model,
-  onPromptChange,
-}: ClaudeTraitsMenuContentProps) {
-  const draft = useComposerThreadDraft(threadId);
+}) {
+  const draft = useComposerThreadDraft(props.threadId);
   const prompt = draft.prompt;
-  const modelOptions = draft.modelOptions?.[PROVIDER];
-  const setProviderModelOptions = useComposerDraftStore((store) => store.setProviderModelOptions);
+  const modelOptions = draft.modelOptions?.claudeCode;
+  const setModelOptions = useComposerDraftStore((store) => store.setModelOptions);
   const {
     effort,
     thinkingEnabled,
@@ -102,44 +94,18 @@ export const ClaudeTraitsMenuContent = memo(function ClaudeTraitsMenuContentImpl
     options,
     ultrathinkPromptControlled,
     supportsFastMode,
-  } = getSelectedClaudeTraits(model, prompt, modelOptions);
-  const defaultReasoningEffort = getDefaultReasoningEffort(PROVIDER);
+  } = getSelectedClaudeTraits(props.model, prompt, modelOptions);
+  const defaultReasoningEffort = getDefaultReasoningEffort("claudeCode");
 
-  const handleEffortChange = useCallback(
-    (value: ClaudeCodeEffort) => {
-      if (ultrathinkPromptControlled) return;
-      if (!value) return;
-      const nextEffort = options.find((option) => option === value);
-      if (!nextEffort) return;
-      if (nextEffort === "ultrathink") {
-        const nextPrompt =
-          prompt.trim().length === 0
-            ? ULTRATHINK_PROMPT_PREFIX
-            : applyClaudePromptEffortPrefix(prompt, "ultrathink");
-        onPromptChange(nextPrompt);
-        return;
-      }
-      setProviderModelOptions(
-        threadId,
-        PROVIDER,
-        normalizeClaudeModelOptions(model, {
-          ...modelOptions,
-          effort: nextEffort,
-        }),
-        { persistSticky: true },
-      );
-    },
-    [
-      ultrathinkPromptControlled,
-      model,
-      modelOptions,
-      onPromptChange,
-      threadId,
-      setProviderModelOptions,
-      options,
-      prompt,
-    ],
-  );
+  const setClaudeModelOptions = (nextClaudeModelOptions: ClaudeModelOptions | undefined) => {
+    const { claudeCode: _discardedClaude, ...otherProviderModelOptions } = draft.modelOptions ?? {};
+    const nextProviderModelOptions: ProviderModelOptions | undefined = nextClaudeModelOptions
+      ? { ...otherProviderModelOptions, claudeCode: nextClaudeModelOptions }
+      : Object.keys(otherProviderModelOptions).length > 0
+        ? otherProviderModelOptions
+        : undefined;
+    setModelOptions(props.threadId, nextProviderModelOptions);
+  };
 
   if (effort === null && thinkingEnabled === null) {
     return null;
@@ -156,7 +122,29 @@ export const ClaudeTraitsMenuContent = memo(function ClaudeTraitsMenuContentImpl
                 Remove Ultrathink from the prompt to change effort.
               </div>
             ) : null}
-            <MenuRadioGroup value={effort} onValueChange={handleEffortChange}>
+            <MenuRadioGroup
+              value={effort}
+              onValueChange={(value) => {
+                if (ultrathinkPromptControlled) return;
+                if (!value) return;
+                const nextEffort = options.find((option) => option === value);
+                if (!nextEffort) return;
+                if (nextEffort === "ultrathink") {
+                  const nextPrompt =
+                    prompt.trim().length === 0
+                      ? ULTRATHINK_PROMPT_PREFIX
+                      : applyClaudePromptEffortPrefix(prompt, "ultrathink");
+                  props.onPromptChange(nextPrompt);
+                  return;
+                }
+                setClaudeModelOptions(
+                  normalizeClaudeModelOptions(props.model, {
+                    ...modelOptions,
+                    effort: nextEffort,
+                  }),
+                );
+              }}
+            >
               {options.map((option) => (
                 <MenuRadioItem key={option} value={option} disabled={ultrathinkPromptControlled}>
                   {CLAUDE_EFFORT_LABELS[option]}
@@ -172,14 +160,11 @@ export const ClaudeTraitsMenuContent = memo(function ClaudeTraitsMenuContentImpl
           <MenuRadioGroup
             value={thinkingEnabled ? "on" : "off"}
             onValueChange={(value) => {
-              setProviderModelOptions(
-                threadId,
-                PROVIDER,
-                normalizeClaudeModelOptions(model, {
+              setClaudeModelOptions(
+                normalizeClaudeModelOptions(props.model, {
                   ...modelOptions,
                   thinking: value === "on",
                 }),
-                { persistSticky: true },
               );
             }}
           >
@@ -196,14 +181,11 @@ export const ClaudeTraitsMenuContent = memo(function ClaudeTraitsMenuContentImpl
             <MenuRadioGroup
               value={fastModeEnabled ? "on" : "off"}
               onValueChange={(value) => {
-                setProviderModelOptions(
-                  threadId,
-                  PROVIDER,
-                  normalizeClaudeModelOptions(model, {
+                setClaudeModelOptions(
+                  normalizeClaudeModelOptions(props.model, {
                     ...modelOptions,
                     fastMode: value === "on",
                   }),
-                  { persistSticky: true },
                 );
               }}
             >
@@ -215,19 +197,21 @@ export const ClaudeTraitsMenuContent = memo(function ClaudeTraitsMenuContentImpl
       ) : null}
     </>
   );
-});
+}
 
-export const ClaudeTraitsPicker = memo(function ClaudeTraitsPicker({
-  threadId,
-  model,
-  onPromptChange,
-}: ClaudeTraitsMenuContentProps) {
+export const ClaudeTraitsMenuContent = memo(ClaudeTraitsMenuContentImpl);
+
+export const ClaudeTraitsPicker = memo(function ClaudeTraitsPicker(props: {
+  threadId: ThreadId;
+  model: string | null | undefined;
+  onPromptChange: (prompt: string) => void;
+}) {
   const [isMenuOpen, setIsMenuOpen] = useState(false);
-  const draft = useComposerThreadDraft(threadId);
+  const draft = useComposerThreadDraft(props.threadId);
   const prompt = draft.prompt;
-  const modelOptions = draft.modelOptions?.[PROVIDER];
+  const modelOptions = draft.modelOptions?.claudeCode;
   const { effort, thinkingEnabled, fastModeEnabled, ultrathinkPromptControlled, supportsFastMode } =
-    getSelectedClaudeTraits(model, prompt, modelOptions);
+    getSelectedClaudeTraits(props.model, prompt, modelOptions);
   const triggerLabel = [
     ultrathinkPromptControlled
       ? "Ultrathink"
@@ -262,9 +246,9 @@ export const ClaudeTraitsPicker = memo(function ClaudeTraitsPicker({
       </MenuTrigger>
       <MenuPopup align="start">
         <ClaudeTraitsMenuContent
-          threadId={threadId}
-          model={model}
-          onPromptChange={onPromptChange}
+          threadId={props.threadId}
+          model={props.model}
+          onPromptChange={props.onPromptChange}
         />
       </MenuPopup>
     </Menu>

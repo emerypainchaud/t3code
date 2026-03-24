@@ -10,7 +10,27 @@ import {
   summarizeGitResult,
 } from "./GitActionsControl.logic";
 
-function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
+function status(
+  overrides: Omit<Partial<GitStatusResult>, "pr"> & {
+    pr?: Partial<NonNullable<GitStatusResult["pr"]>> | null;
+  } = {},
+): GitStatusResult {
+  const { pr: prOverride, ...statusOverrides } = overrides;
+  const pr: GitStatusResult["pr"] =
+    prOverride === undefined
+      ? null
+      : prOverride === null
+        ? null
+        : {
+            forge: "github" as const,
+            number: 1,
+            title: "Review request",
+            url: "https://example.com/review/1",
+            baseBranch: "main",
+            headBranch: "feature/test",
+            state: "open" as const,
+            ...prOverride,
+          };
   return {
     branch: "feature/test",
     hasWorkingTreeChanges: false,
@@ -19,11 +39,12 @@ function status(overrides: Partial<GitStatusResult> = {}): GitStatusResult {
       insertions: 0,
       deletions: 0,
     },
+    forge: null,
     hasUpstream: true,
     aheadCount: 0,
     behindCount: 0,
-    pr: null,
-    ...overrides,
+    pr,
+    ...statusOverrides,
   };
 }
 
@@ -87,6 +108,72 @@ describe("when: branch is clean and has an open PR", () => {
   });
 });
 
+describe("when: repository forge is GitLab", () => {
+  it("uses MR labels for open and create actions", () => {
+    const openItems = buildMenuItems(
+      status({
+        forge: "gitlab",
+        pr: {
+          forge: "gitlab",
+          number: 17,
+          title: "Existing MR",
+          url: "https://gitlab.example.com/group/project/-/merge_requests/17",
+        },
+      }),
+      false,
+    );
+    assert.deepEqual(openItems[2], {
+      id: "pr",
+      label: "Open MR",
+      disabled: false,
+      icon: "pr",
+      kind: "open_pr",
+    });
+
+    const createItems = buildMenuItems(status({ forge: "gitlab", aheadCount: 2, pr: null }), false);
+    assert.deepEqual(createItems[2], {
+      id: "pr",
+      label: "Create MR",
+      disabled: false,
+      icon: "pr",
+      kind: "open_dialog",
+      dialogAction: "create_pr",
+    });
+  });
+
+  it("uses MR language in progress and result copy", () => {
+    const stages = buildGitActionProgressStages({
+      action: "commit_push_pr",
+      forge: "gitlab",
+      hasCustomCommitMessage: false,
+      hasWorkingTreeChanges: true,
+      pushTarget: "origin/feature/test",
+    });
+    assert.deepEqual(stages.at(-1), "Creating MR...");
+
+    const summary = summarizeGitResult({
+      action: "commit_push_pr",
+      branch: { status: "skipped_not_requested" },
+      commit: {
+        status: "created",
+        commitSha: "89abcdef01234567",
+        subject: "feat: ship gitlab shortcuts",
+      },
+      push: { status: "pushed", branch: "foo" },
+      pr: {
+        status: "created",
+        forge: "gitlab",
+        number: 19,
+        title: "feat: ship gitlab shortcuts",
+      },
+    });
+    assert.deepEqual(summary, {
+      title: "Created MR #19",
+      description: "feat: ship gitlab shortcuts",
+    });
+  });
+});
+
 describe("when: actions are busy", () => {
   it("resolveQuickAction returns running disabled state", () => {
     const quick = resolveQuickAction(status(), true);
@@ -143,6 +230,21 @@ describe("when: git status is unavailable", () => {
   it("buildMenuItems returns no menu items", () => {
     const items = buildMenuItems(null, false);
     assert.deepEqual(items, []);
+  });
+});
+
+describe("when: HEAD is detached", () => {
+  it("uses generic review-request copy in the detached-head hint", () => {
+    const quick = resolveQuickAction(
+      status({ forge: "gitlab", branch: null, hasWorkingTreeChanges: false, hasUpstream: false }),
+      false,
+    );
+    assert.deepInclude(quick, {
+      kind: "show_hint",
+      label: "Commit",
+      disabled: true,
+      hint: "Create and checkout a branch before pushing or opening a review request.",
+    });
   });
 });
 

@@ -1,36 +1,30 @@
 import {
   ArrowLeftIcon,
-  ArrowUpDownIcon,
   ChevronRightIcon,
   FolderIcon,
   GitPullRequestIcon,
   PlusIcon,
+  GlobeIcon,
   RocketIcon,
   SettingsIcon,
   SquarePenIcon,
   TerminalIcon,
   TriangleAlertIcon,
 } from "lucide-react";
-import { autoAnimate } from "@formkit/auto-animate";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
-  DndContext,
-  type DragCancelEvent,
-  type CollisionDetection,
-  PointerSensor,
-  type DragStartEvent,
-  closestCorners,
-  pointerWithin,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import { SortableContext, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
-import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
-import { CSS } from "@dnd-kit/utilities";
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
+  DEFAULT_RUNTIME_MODE,
   DEFAULT_MODEL_BY_PROVIDER,
   type DesktopUpdateState,
+  type ProjectListDirectoryResult,
+  type ProjectSshPreflightResult,
   ProjectId,
   ThreadId,
   type GitStatusResult,
@@ -38,22 +32,18 @@ import {
 } from "@t3tools/contracts";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
-import {
-  type SidebarProjectSortOrder,
-  type SidebarThreadSortOrder,
-  useAppSettings,
-} from "../appSettings";
+import { useAppSettings } from "../appSettings";
 import { isElectron } from "../env";
-import { APP_STAGE_LABEL, APP_VERSION } from "../branding";
-import { isLinuxPlatform, isMacPlatform, newCommandId, newProjectId } from "../lib/utils";
+import { APP_STAGE_LABEL } from "../branding";
+import { newCommandId, newProjectId, newThreadId } from "../lib/utils";
 import { useStore } from "../store";
-import { shortcutLabelForCommand } from "../keybindings";
-import { derivePendingApprovals, derivePendingUserInputs } from "../session-logic";
+import { isChatNewLocalShortcut, isChatNewShortcut, shortcutLabelForCommand } from "../keybindings";
+import { type Thread } from "../types";
+import { derivePendingApprovals } from "../session-logic";
 import { gitRemoveWorktreeMutationOptions, gitStatusQueryOptions } from "../lib/gitReactQuery";
 import { serverConfigQueryOptions } from "../lib/serverReactQuery";
 import { readNativeApi } from "../nativeApi";
-import { useComposerDraftStore } from "../composerDraftStore";
-import { useHandleNewThread } from "../hooks/useHandleNewThread";
+import { type DraftThreadEnvMode, useComposerDraftStore } from "../composerDraftStore";
 import { selectThreadTerminalState, useTerminalStateStore } from "../terminalStateStore";
 import { toastManager } from "./ui/toast";
 import {
@@ -69,8 +59,7 @@ import {
 } from "./desktopUpdate.logic";
 import { Alert, AlertAction, AlertDescription, AlertTitle } from "./ui/alert";
 import { Button } from "./ui/button";
-import { Collapsible, CollapsibleContent } from "./ui/collapsible";
-import { Menu, MenuGroup, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "./ui/menu";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "./ui/collapsible";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import {
   SidebarContent,
@@ -87,37 +76,39 @@ import {
   SidebarSeparator,
   SidebarTrigger,
 } from "./ui/sidebar";
-import { useThreadSelectionStore } from "../threadSelectionStore";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { isNonEmpty as isNonEmptyString } from "effect/String";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
+import { reviewRequestShortLabel } from "../gitForge";
+import { useWorkspaceConnectionState } from "../workspaceConnectionState";
 import {
-  getVisibleThreadsForProject,
-  resolveProjectStatusIndicator,
-  resolveSidebarNewThreadEnvMode,
-  resolveThreadRowClassName,
-  resolveThreadStatusPill,
-  shouldClearThreadSelectionOnMouseDown,
-  sortProjectsForSidebar,
-  sortThreadsForSidebar,
-} from "./Sidebar.logic";
-import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+  workspaceStatusDotClassName,
+  workspaceStatusLabel,
+  workspaceStatusTextClassName,
+} from "../workspaceStatus";
+import { resolveWorkspaceHttpUrl } from "../workspaceOrigin";
+import {
+  DEFAULT_PROJECT_EXECUTION_SYNC_IGNORES,
+  parseExecutionTargetIgnores,
+  projectExecutionTargetLabel,
+  serializeExecutionTargetIgnores,
+} from "../projectExecutionTarget";
+import { resolveProjectExecutionRoot } from "../projectExecutionPath";
+import { RemoteDirectoryBrowserDialog } from "./RemoteDirectoryBrowserDialog";
 
 const EMPTY_KEYBINDINGS: ResolvedKeybindingsConfig = [];
 const THREAD_PREVIEW_LIMIT = 6;
-const SIDEBAR_SORT_LABELS: Record<SidebarProjectSortOrder, string> = {
-  updated_at: "Last user message",
-  created_at: "Created at",
-  manual: "Manual",
-};
-const SIDEBAR_THREAD_SORT_LABELS: Record<SidebarThreadSortOrder, string> = {
-  updated_at: "Last user message",
-  created_at: "Created at",
-};
-const SIDEBAR_LIST_ANIMATION_OPTIONS = {
-  duration: 180,
-  easing: "ease-out",
-} as const;
-const loadedProjectFaviconSrcs = new Set<string>();
+const WORKSPACE_SWIPE_COOLDOWN_MS = 120;
+const WORKSPACE_POINTER_SWIPE_THRESHOLD_PX = 52;
+const WORKSPACE_WHEEL_RESET_MS = 120;
+const WORKSPACE_WHEEL_SWIPE_THRESHOLD_PX = 18;
+
+async function copyTextToClipboard(text: string): Promise<void> {
+  if (typeof navigator === "undefined" || navigator.clipboard?.writeText === undefined) {
+    throw new Error("Clipboard API unavailable.");
+  }
+  await navigator.clipboard.writeText(text);
+}
 
 function formatRelativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
@@ -129,6 +120,13 @@ function formatRelativeTime(iso: string): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
+interface ThreadStatusPill {
+  label: "Working" | "Connecting" | "Completed" | "Pending Approval";
+  colorClass: string;
+  dotClass: string;
+  pulse: boolean;
+}
+
 interface TerminalStatusIndicator {
   label: "Terminal process running";
   colorClass: string;
@@ -136,13 +134,93 @@ interface TerminalStatusIndicator {
 }
 
 interface PrStatusIndicator {
-  label: "PR open" | "PR closed" | "PR merged";
+  label: string;
   colorClass: string;
   tooltip: string;
   url: string;
 }
 
+interface RemoteDirectoryBrowserState {
+  kind: "workspace" | "ssh";
+  listing: ProjectListDirectoryResult;
+}
+
+type AddProjectMode = "workspace-local" | "ssh";
+
+interface SshProjectDraft {
+  label: string;
+  host: string;
+  username: string;
+  port: string;
+  remotePath: string;
+  localPathOverride: string;
+  ignoresText: string;
+}
+
+function createDefaultSshProjectDraft(): SshProjectDraft {
+  return {
+    label: "",
+    host: "",
+    username: "",
+    port: "",
+    remotePath: "",
+    localPathOverride: "",
+    ignoresText: serializeExecutionTargetIgnores(DEFAULT_PROJECT_EXECUTION_SYNC_IGNORES),
+  };
+}
+
 type ThreadPr = GitStatusResult["pr"];
+
+function hasUnseenCompletion(thread: Thread): boolean {
+  if (!thread.latestTurn?.completedAt) return false;
+  const completedAt = Date.parse(thread.latestTurn.completedAt);
+  if (Number.isNaN(completedAt)) return false;
+  if (!thread.lastVisitedAt) return true;
+
+  const lastVisitedAt = Date.parse(thread.lastVisitedAt);
+  if (Number.isNaN(lastVisitedAt)) return true;
+  return completedAt > lastVisitedAt;
+}
+
+function threadStatusPill(thread: Thread, hasPendingApprovals: boolean): ThreadStatusPill | null {
+  if (hasPendingApprovals) {
+    return {
+      label: "Pending Approval",
+      colorClass: "text-amber-600 dark:text-amber-300/90",
+      dotClass: "bg-amber-500 dark:bg-amber-300/90",
+      pulse: false,
+    };
+  }
+
+  if (thread.session?.status === "running") {
+    return {
+      label: "Working",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  if (thread.session?.status === "connecting") {
+    return {
+      label: "Connecting",
+      colorClass: "text-sky-600 dark:text-sky-300/80",
+      dotClass: "bg-sky-500 dark:bg-sky-300/80",
+      pulse: true,
+    };
+  }
+
+  if (hasUnseenCompletion(thread)) {
+    return {
+      label: "Completed",
+      colorClass: "text-emerald-600 dark:text-emerald-300/90",
+      dotClass: "bg-emerald-500 dark:bg-emerald-300/90",
+      pulse: false,
+    };
+  }
+
+  return null;
+}
 
 function terminalStatusFromRunningIds(
   runningTerminalIds: string[],
@@ -159,28 +237,29 @@ function terminalStatusFromRunningIds(
 
 function prStatusIndicator(pr: ThreadPr): PrStatusIndicator | null {
   if (!pr) return null;
+  const requestLabel = reviewRequestShortLabel(pr.forge);
 
   if (pr.state === "open") {
     return {
-      label: "PR open",
+      label: `${requestLabel} open`,
       colorClass: "text-emerald-600 dark:text-emerald-300/90",
-      tooltip: `#${pr.number} PR open: ${pr.title}`,
+      tooltip: `#${pr.number} ${requestLabel} open: ${pr.title}`,
       url: pr.url,
     };
   }
   if (pr.state === "closed") {
     return {
-      label: "PR closed",
+      label: `${requestLabel} closed`,
       colorClass: "text-zinc-500 dark:text-zinc-400/80",
-      tooltip: `#${pr.number} PR closed: ${pr.title}`,
+      tooltip: `#${pr.number} ${requestLabel} closed: ${pr.title}`,
       url: pr.url,
     };
   }
   if (pr.state === "merged") {
     return {
-      label: "PR merged",
+      label: `${requestLabel} merged`,
       colorClass: "text-violet-600 dark:text-violet-300/90",
-      tooltip: `#${pr.number} PR merged: ${pr.title}`,
+      tooltip: `#${pr.number} ${requestLabel} merged: ${pr.title}`,
       url: pr.url,
     };
   }
@@ -203,35 +282,15 @@ function T3Wordmark() {
   );
 }
 
-/**
- * Derives the server's HTTP origin (scheme + host + port) from the same
- * sources WsTransport uses, converting ws(s) to http(s).
- */
-function getServerHttpOrigin(): string {
-  const bridgeUrl = window.desktopBridge?.getWsUrl();
-  const envUrl = import.meta.env.VITE_WS_URL as string | undefined;
-  const wsUrl =
-    bridgeUrl && bridgeUrl.length > 0
-      ? bridgeUrl
-      : envUrl && envUrl.length > 0
-        ? envUrl
-        : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:${window.location.port}`;
-  // Parse to extract just the origin, dropping path/query (e.g. ?token=…)
-  const httpUrl = wsUrl.replace(/^wss:/, "https:").replace(/^ws:/, "http:");
-  try {
-    return new URL(httpUrl).origin;
-  } catch {
-    return httpUrl;
-  }
-}
-
-const serverHttpOrigin = getServerHttpOrigin();
-
-function ProjectFavicon({ cwd }: { cwd: string }) {
-  const src = `${serverHttpOrigin}/api/project-favicon?cwd=${encodeURIComponent(cwd)}`;
-  const [status, setStatus] = useState<"loading" | "loaded" | "error">(() =>
-    loadedProjectFaviconSrcs.has(src) ? "loaded" : "loading",
-  );
+function ProjectFavicon(props: {
+  cwd: string;
+  workspace: {
+    isLocal: boolean;
+    wsUrl: string;
+  };
+}) {
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">("loading");
+  const src = `${resolveWorkspaceHttpUrl("/api/project-favicon", props.workspace)}?cwd=${encodeURIComponent(props.cwd)}`;
 
   if (status === "error") {
     return <FolderIcon className="size-3.5 shrink-0 text-muted-foreground/50" />;
@@ -242,121 +301,137 @@ function ProjectFavicon({ cwd }: { cwd: string }) {
       src={src}
       alt=""
       className={`size-3.5 shrink-0 rounded-sm object-contain ${status === "loading" ? "hidden" : ""}`}
-      onLoad={() => {
-        loadedProjectFaviconSrcs.add(src);
-        setStatus("loaded");
-      }}
+      onLoad={() => setStatus("loaded")}
       onError={() => setStatus("error")}
     />
   );
 }
 
-type SortableProjectHandleProps = Pick<
-  ReturnType<typeof useSortable>,
-  "attributes" | "listeners" | "setActivatorNodeRef"
->;
-
-function ProjectSortMenu({
-  projectSortOrder,
-  threadSortOrder,
-  onProjectSortOrderChange,
-  onThreadSortOrderChange,
-}: {
-  projectSortOrder: SidebarProjectSortOrder;
-  threadSortOrder: SidebarThreadSortOrder;
-  onProjectSortOrderChange: (sortOrder: SidebarProjectSortOrder) => void;
-  onThreadSortOrderChange: (sortOrder: SidebarThreadSortOrder) => void;
+function WorkspaceSwitcher(props: {
+  activeWorkspaceId: string;
+  activeWorkspaceName: string;
+  workspaceIdsAndNames: ReadonlyArray<{ id: string; name: string }>;
+  onChange: (workspaceId: string) => void;
 }) {
+  const connectionState = useWorkspaceConnectionState(props.activeWorkspaceId);
+  const statusLabel = workspaceStatusLabel(connectionState);
+
   return (
-    <Menu>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <MenuTrigger className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground" />
-          }
-        >
-          <ArrowUpDownIcon className="size-3.5" />
-        </TooltipTrigger>
-        <TooltipPopup side="right">Sort projects</TooltipPopup>
-      </Tooltip>
-      <MenuPopup align="end" side="bottom" className="min-w-44">
-        <MenuGroup>
-          <div className="px-2 py-1 sm:text-xs font-medium text-muted-foreground">
-            Sort projects
+    <div className="w-full min-w-0">
+      <Select
+        value={props.activeWorkspaceId}
+        onValueChange={(value) => value && props.onChange(value)}
+      >
+        <SelectTrigger className="h-8 min-w-0 rounded-lg border-border bg-background/70 text-xs">
+          <div className="flex min-w-0 flex-1 items-center gap-2">
+            <GlobeIcon className="size-3.5 text-muted-foreground" />
+            <div className="min-w-0 flex-1">
+              <div className="truncate text-left text-foreground">{props.activeWorkspaceName}</div>
+              <div
+                className={`flex items-center gap-1 text-[10px] ${workspaceStatusTextClassName(connectionState)}`}
+              >
+                <span
+                  className={`size-1.5 rounded-full ${workspaceStatusDotClassName(connectionState)}`}
+                />
+                <span>{statusLabel}</span>
+              </div>
+            </div>
           </div>
-          <MenuRadioGroup
-            value={projectSortOrder}
-            onValueChange={(value) => {
-              onProjectSortOrderChange(value as SidebarProjectSortOrder);
-            }}
-          >
-            {(Object.entries(SIDEBAR_SORT_LABELS) as Array<[SidebarProjectSortOrder, string]>).map(
-              ([value, label]) => (
-                <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
-                  {label}
-                </MenuRadioItem>
-              ),
-            )}
-          </MenuRadioGroup>
-        </MenuGroup>
-        <MenuGroup>
-          <div className="px-2 pt-2 pb-1 sm:text-xs font-medium text-muted-foreground">
-            Sort threads
-          </div>
-          <MenuRadioGroup
-            value={threadSortOrder}
-            onValueChange={(value) => {
-              onThreadSortOrderChange(value as SidebarThreadSortOrder);
-            }}
-          >
-            {(
-              Object.entries(SIDEBAR_THREAD_SORT_LABELS) as Array<[SidebarThreadSortOrder, string]>
-            ).map(([value, label]) => (
-              <MenuRadioItem key={value} value={value} className="min-h-7 py-1 sm:text-xs">
-                {label}
-              </MenuRadioItem>
-            ))}
-          </MenuRadioGroup>
-        </MenuGroup>
-      </MenuPopup>
-    </Menu>
+          <SelectValue className="hidden" placeholder="Select workspace" />
+        </SelectTrigger>
+        <SelectPopup>
+          {props.workspaceIdsAndNames.map((workspace) => {
+            const isActive = workspace.id === props.activeWorkspaceId;
+            return (
+              <SelectItem key={workspace.id} value={workspace.id}>
+                <div className="flex min-w-0 items-center gap-2">
+                  {isActive && (
+                    <span
+                      className={`size-1.5 rounded-full ${workspaceStatusDotClassName(connectionState)}`}
+                    />
+                  )}
+                  <span className="truncate">{workspace.name}</span>
+                  {isActive && (
+                    <span
+                      className={`ml-auto text-[10px] ${workspaceStatusTextClassName(connectionState)}`}
+                    >
+                      {statusLabel}
+                    </span>
+                  )}
+                </div>
+              </SelectItem>
+            );
+          })}
+        </SelectPopup>
+      </Select>
+    </div>
   );
 }
 
-function SortableProjectItem({
-  projectId,
-  disabled = false,
-  children,
-}: {
-  projectId: ProjectId;
-  disabled?: boolean;
-  children: (handleProps: SortableProjectHandleProps) => React.ReactNode;
-}) {
-  const {
-    attributes,
-    listeners,
-    setActivatorNodeRef,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-    isOver,
-  } = useSortable({ id: projectId, disabled });
+function ActiveWorkspaceBadge(props: { activeWorkspaceId: string; activeWorkspaceName: string }) {
+  const connectionState = useWorkspaceConnectionState(props.activeWorkspaceId);
+  const statusLabel = workspaceStatusLabel(connectionState);
+
   return (
-    <li
-      ref={setNodeRef}
-      style={{
-        transform: CSS.Translate.toString(transform),
-        transition,
-      }}
-      className={`group/menu-item relative rounded-md ${
-        isDragging ? "z-20 opacity-80" : ""
-      } ${isOver && !isDragging ? "ring-1 ring-primary/40" : ""}`}
-      data-sidebar="menu-item"
-      data-slot="sidebar-menu-item"
-    >
-      {children({ attributes, listeners, setActivatorNodeRef })}
-    </li>
+    <div className="drag-region-disabled flex min-w-0 items-center gap-2 rounded-full border border-border/80 bg-background/70 px-3 py-1.5">
+      <span
+        className={`size-2 shrink-0 rounded-full ${workspaceStatusDotClassName(connectionState)}`}
+      />
+      <span className="truncate text-xs font-medium text-foreground">
+        {props.activeWorkspaceName}
+      </span>
+      <span className="sr-only">{statusLabel}</span>
+    </div>
+  );
+}
+
+function WorkspacePager(props: {
+  readonly activeWorkspaceId: string;
+  readonly workspaceIdsAndNames: ReadonlyArray<{ id: string; name: string }>;
+  readonly onChange: (workspaceId: string) => void;
+  readonly onOpenWorkspaceSettings: () => void;
+}) {
+  return (
+    <div className="drag-region-disabled flex items-center gap-2">
+      <div
+        className="flex min-w-0 flex-1 items-center justify-center gap-0.5 px-0.5 py-0.5"
+        role="listbox"
+        aria-label="Workspace switcher"
+      >
+        {props.workspaceIdsAndNames.map((workspace) => {
+          const isActive = workspace.id === props.activeWorkspaceId;
+          return (
+            <button
+              key={workspace.id}
+              type="button"
+              role="option"
+              aria-selected={isActive}
+              aria-label={`Switch to ${workspace.name}`}
+              aria-pressed={isActive}
+              title={workspace.name}
+              className="inline-flex size-9 shrink-0 items-center justify-center rounded-full transition-colors hover:bg-accent/55"
+              onClick={() => props.onChange(workspace.id)}
+            >
+              <span
+                className={`rounded-full transition-all ${
+                  isActive
+                    ? "h-3 w-3 bg-foreground/85 shadow-[0_0_0_2px_color-mix(in_oklab,var(--color-background)_55%,transparent)]"
+                    : "h-2.5 w-2.5 bg-muted-foreground/28 hover:bg-muted-foreground/46"
+                }`}
+              />
+            </button>
+          );
+        })}
+      </div>
+      <button
+        type="button"
+        aria-label="Add or manage workspaces"
+        className="inline-flex size-9 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent/55 hover:text-foreground"
+        onClick={props.onOpenWorkspaceSettings}
+      >
+        <PlusIcon className="size-4" />
+      </button>
+    </div>
   );
 }
 
@@ -365,13 +440,15 @@ export default function Sidebar() {
   const threads = useStore((store) => store.threads);
   const markThreadUnread = useStore((store) => store.markThreadUnread);
   const toggleProject = useStore((store) => store.toggleProject);
-  const reorderProjects = useStore((store) => store.reorderProjects);
-  const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
+  const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearThreadDraft);
   const getDraftThreadByProjectId = useComposerDraftStore(
     (store) => store.getDraftThreadByProjectId,
   );
+  const getDraftThread = useComposerDraftStore((store) => store.getDraftThread);
   const terminalStateByThreadId = useTerminalStateStore((state) => state.terminalStateByThreadId);
   const clearTerminalState = useTerminalStateStore((state) => state.clearTerminalState);
+  const setProjectDraftThreadId = useComposerDraftStore((store) => store.setProjectDraftThreadId);
+  const setDraftThreadContext = useComposerDraftStore((store) => store.setDraftThreadContext);
   const clearProjectDraftThreadId = useComposerDraftStore(
     (store) => store.clearProjectDraftThreadId,
   );
@@ -380,23 +457,42 @@ export default function Sidebar() {
   );
   const navigate = useNavigate();
   const isOnSettings = useLocation({ select: (loc) => loc.pathname === "/settings" });
-  const { settings: appSettings, updateSettings } = useAppSettings();
-  const { handleNewThread } = useHandleNewThread();
+  const { settings: appSettings, activeWorkspace, workspaces, updateSettings } = useAppSettings();
+  const workspaceOptions = useMemo(
+    () => workspaces.map((workspace) => ({ id: workspace.id, name: workspace.name })),
+    [workspaces],
+  );
+  const workspaceSwipeStartXRef = useRef<number | null>(null);
+  const workspaceSwipeHandledRef = useRef(false);
+  const workspaceLastGestureAtRef = useRef(0);
+  const workspaceWheelDeltaRef = useRef(0);
+  const workspaceWheelVerticalDeltaRef = useRef(0);
+  const workspaceWheelHandledRef = useRef(false);
+  const workspaceWheelResetTimeoutRef = useRef<number | null>(null);
+  const sidebarGestureRef = useRef<HTMLDivElement | null>(null);
   const routeThreadId = useParams({
     strict: false,
     select: (params) => (params.threadId ? ThreadId.makeUnsafe(params.threadId) : null),
   });
-  const { data: keybindings = EMPTY_KEYBINDINGS } = useQuery({
-    ...serverConfigQueryOptions(),
-    select: (config) => config.keybindings,
-  });
+  const serverConfigQuery = useQuery(serverConfigQueryOptions());
+  const keybindings = serverConfigQuery.data?.keybindings ?? EMPTY_KEYBINDINGS;
   const queryClient = useQueryClient();
   const removeWorktreeMutation = useMutation(gitRemoveWorktreeMutationOptions({ queryClient }));
   const [addingProject, setAddingProject] = useState(false);
+  const [addProjectMode, setAddProjectMode] = useState<AddProjectMode>("workspace-local");
   const [newCwd, setNewCwd] = useState("");
+  const [sshProjectDraft, setSshProjectDraft] = useState<SshProjectDraft>(() =>
+    createDefaultSshProjectDraft(),
+  );
   const [isPickingFolder, setIsPickingFolder] = useState(false);
   const [isAddingProject, setIsAddingProject] = useState(false);
+  const [isCheckingSshProject, setIsCheckingSshProject] = useState(false);
   const [addProjectError, setAddProjectError] = useState<string | null>(null);
+  const [sshProjectPreflight, setSshProjectPreflight] = useState<ProjectSshPreflightResult | null>(
+    null,
+  );
+  const [remoteDirectoryBrowser, setRemoteDirectoryBrowser] =
+    useState<RemoteDirectoryBrowserState | null>(null);
   const addProjectInputRef = useRef<HTMLInputElement | null>(null);
   const [renamingThreadId, setRenamingThreadId] = useState<ThreadId | null>(null);
   const [renamingTitle, setRenamingTitle] = useState("");
@@ -405,20 +501,19 @@ export default function Sidebar() {
   >(() => new Set());
   const renamingCommittedRef = useRef(false);
   const renamingInputRef = useRef<HTMLInputElement | null>(null);
-  const dragInProgressRef = useRef(false);
-  const suppressProjectClickAfterDragRef = useRef(false);
   const [desktopUpdateState, setDesktopUpdateState] = useState<DesktopUpdateState | null>(null);
-  const selectedThreadIds = useThreadSelectionStore((s) => s.selectedThreadIds);
-  const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
-  const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
-  const clearSelection = useThreadSelectionStore((s) => s.clearSelection);
-  const removeFromSelection = useThreadSelectionStore((s) => s.removeFromSelection);
-  const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
-  const isLinuxDesktop = isElectron && isLinuxPlatform(navigator.platform);
-  const shouldBrowseForProjectImmediately = isElectron && !isLinuxDesktop;
-  const shouldShowProjectPathEntry = addingProject && !shouldBrowseForProjectImmediately;
+  const pendingApprovalByThreadId = useMemo(() => {
+    const map = new Map<ThreadId, boolean>();
+    for (const thread of threads) {
+      map.set(thread.id, derivePendingApprovals(thread.activities).length > 0);
+    }
+    return map;
+  }, [threads]);
   const projectCwdById = useMemo(
-    () => new Map(projects.map((project) => [project.id, project.cwd] as const)),
+    () =>
+      new Map(
+        projects.map((project) => [project.id, resolveProjectExecutionRoot(project)] as const),
+      ),
     [projects],
   );
   const threadGitTargets = useMemo(
@@ -485,18 +580,95 @@ export default function Sidebar() {
     void api.shell.openExternal(prUrl).catch((error) => {
       toastManager.add({
         type: "error",
-        title: "Unable to open PR link",
+        title: "Unable to open review request link",
         description: error instanceof Error ? error.message : "An error occurred.",
       });
     });
   }, []);
 
+  const handleNewThread = useCallback(
+    (
+      projectId: ProjectId,
+      options?: {
+        branch?: string | null;
+        worktreePath?: string | null;
+        envMode?: DraftThreadEnvMode;
+      },
+    ): Promise<void> => {
+      const hasBranchOption = options?.branch !== undefined;
+      const hasWorktreePathOption = options?.worktreePath !== undefined;
+      const hasEnvModeOption = options?.envMode !== undefined;
+      const storedDraftThread = getDraftThreadByProjectId(projectId);
+      if (storedDraftThread) {
+        return (async () => {
+          if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
+            setDraftThreadContext(storedDraftThread.threadId, {
+              ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
+              ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+              ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+            });
+          }
+          setProjectDraftThreadId(projectId, storedDraftThread.threadId);
+          if (routeThreadId === storedDraftThread.threadId) {
+            return;
+          }
+          await navigate({
+            to: "/$threadId",
+            params: { threadId: storedDraftThread.threadId },
+          });
+        })();
+      }
+      clearProjectDraftThreadId(projectId);
+
+      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
+      if (activeDraftThread && routeThreadId && activeDraftThread.projectId === projectId) {
+        if (hasBranchOption || hasWorktreePathOption || hasEnvModeOption) {
+          setDraftThreadContext(routeThreadId, {
+            ...(hasBranchOption ? { branch: options?.branch ?? null } : {}),
+            ...(hasWorktreePathOption ? { worktreePath: options?.worktreePath ?? null } : {}),
+            ...(hasEnvModeOption ? { envMode: options?.envMode } : {}),
+          });
+        }
+        setProjectDraftThreadId(projectId, routeThreadId);
+        return Promise.resolve();
+      }
+      const threadId = newThreadId();
+      const createdAt = new Date().toISOString();
+      return (async () => {
+        setProjectDraftThreadId(projectId, threadId, {
+          createdAt,
+          branch: options?.branch ?? null,
+          worktreePath: options?.worktreePath ?? null,
+          envMode: options?.envMode ?? "local",
+          runtimeMode: DEFAULT_RUNTIME_MODE,
+        });
+
+        await navigate({
+          to: "/$threadId",
+          params: { threadId },
+        });
+      })();
+    },
+    [
+      clearProjectDraftThreadId,
+      getDraftThreadByProjectId,
+      navigate,
+      getDraftThread,
+      routeThreadId,
+      setDraftThreadContext,
+      setProjectDraftThreadId,
+    ],
+  );
+
   const focusMostRecentThreadForProject = useCallback(
     (projectId: ProjectId) => {
-      const latestThread = sortThreadsForSidebar(
-        threads.filter((thread) => thread.projectId === projectId),
-        appSettings.sidebarThreadSortOrder,
-      )[0];
+      const latestThread = threads
+        .filter((thread) => thread.projectId === projectId)
+        .toSorted((a, b) => {
+          const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+          if (byDate !== 0) return byDate;
+          return b.id.localeCompare(a.id);
+        })[0];
       if (!latestThread) return;
 
       void navigate({
@@ -504,8 +676,91 @@ export default function Sidebar() {
         params: { threadId: latestThread.id },
       });
     },
-    [appSettings.sidebarThreadSortOrder, navigate, threads],
+    [navigate, threads],
   );
+
+  const resetAddProjectState = useCallback(
+    (nextOpen = false) => {
+      setAddingProject(nextOpen);
+      setAddProjectMode(activeWorkspace.isLocal ? "workspace-local" : "ssh");
+      setNewCwd("");
+      setSshProjectDraft(createDefaultSshProjectDraft());
+      setSshProjectPreflight(null);
+      setAddProjectError(null);
+      setRemoteDirectoryBrowser(null);
+      setIsPickingFolder(false);
+      setIsCheckingSshProject(false);
+      setIsAddingProject(false);
+    },
+    [activeWorkspace.isLocal],
+  );
+
+  const updateSshProjectDraft = useCallback((patch: Partial<SshProjectDraft>) => {
+    setSshProjectDraft((current) => ({ ...current, ...patch }));
+    setAddProjectError(null);
+    setSshProjectPreflight(null);
+  }, []);
+
+  const parseSshProjectPort = useCallback(() => {
+    const portText = sshProjectDraft.port.trim();
+    if (!portText) {
+      return { ok: true as const, port: undefined };
+    }
+    const parsedPort = Number(portText);
+    if (!Number.isInteger(parsedPort) || parsedPort <= 0 || parsedPort > 65535) {
+      return { ok: false as const, error: "SSH port must be a positive integer." };
+    }
+    return { ok: true as const, port: parsedPort };
+  }, [sshProjectDraft.port]);
+
+  const runSshProjectPreflight = useCallback(async () => {
+    const api = readNativeApi();
+    if (!api || isCheckingSshProject || isAddingProject) return null;
+    const host = sshProjectDraft.host.trim();
+    const remotePath = sshProjectDraft.remotePath.trim();
+    if (!host) {
+      setAddProjectError("SSH host is required.");
+      return null;
+    }
+    if (!remotePath) {
+      setAddProjectError("Remote project path is required.");
+      return null;
+    }
+
+    const parsedPort = parseSshProjectPort();
+    if (!parsedPort.ok) {
+      setAddProjectError(parsedPort.error);
+      return null;
+    }
+
+    setIsCheckingSshProject(true);
+    setAddProjectError(null);
+    try {
+      const result = await api.projects.preflightSshTarget({
+        host,
+        ...(sshProjectDraft.username.trim() ? { username: sshProjectDraft.username.trim() } : {}),
+        ...(parsedPort.port !== undefined ? { port: parsedPort.port } : {}),
+        remotePath,
+        ...(sshProjectDraft.localPathOverride.trim()
+          ? { localPathOverride: sshProjectDraft.localPathOverride.trim() }
+          : {}),
+        ignores: parseExecutionTargetIgnores(sshProjectDraft.ignoresText),
+      });
+      setSshProjectPreflight(result);
+      if (result.errors.length > 0) {
+        setAddProjectError(result.errors.join(" "));
+      }
+      return result;
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : "Unable to validate the SSH project target.";
+      setAddProjectError(message);
+      setSshProjectPreflight(null);
+      return null;
+    } finally {
+      setIsCheckingSshProject(false);
+    }
+  }, [isAddingProject, isCheckingSshProject, parseSshProjectPort, sshProjectDraft]);
 
   const addProjectFromPath = useCallback(
     async (rawCwd: string) => {
@@ -542,45 +797,288 @@ export default function Sidebar() {
           defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
           createdAt,
         });
-        await handleNewThread(projectId, {
-          envMode: appSettings.defaultThreadEnvMode,
-        }).catch(() => undefined);
+        await handleNewThread(projectId).catch(() => undefined);
       } catch (error) {
-        const description =
-          error instanceof Error ? error.message : "An error occurred while adding the project.";
         setIsAddingProject(false);
-        if (shouldBrowseForProjectImmediately) {
-          toastManager.add({
-            type: "error",
-            title: "Failed to add project",
-            description,
-          });
-        } else {
-          setAddProjectError(description);
-        }
+        setAddProjectError(
+          error instanceof Error ? error.message : "An error occurred while adding the project.",
+        );
         return;
       }
       finishAddingProject();
     },
-    [
-      focusMostRecentThreadForProject,
-      handleNewThread,
-      isAddingProject,
-      projects,
-      shouldBrowseForProjectImmediately,
-      appSettings.defaultThreadEnvMode,
-    ],
+    [focusMostRecentThreadForProject, handleNewThread, isAddingProject, projects],
   );
 
+  const addProjectFromSshTarget = useCallback(async () => {
+    if (isAddingProject) return;
+    const api = readNativeApi();
+    if (!api) return;
+
+    const host = sshProjectDraft.host.trim();
+    const remotePath = sshProjectDraft.remotePath.trim();
+    if (!host) {
+      setAddProjectError("SSH host is required.");
+      return;
+    }
+    if (!remotePath) {
+      setAddProjectError("Remote project path is required.");
+      return;
+    }
+
+    const parsedPort = parseSshProjectPort();
+    if (!parsedPort.ok) {
+      setAddProjectError(parsedPort.error);
+      return;
+    }
+
+    try {
+      const preflight = (await runSshProjectPreflight()) ?? sshProjectPreflight;
+      if (!preflight) {
+        return;
+      }
+      if (
+        !preflight.sshReachable ||
+        !preflight.remotePathExists ||
+        !preflight.mutagenInstalled ||
+        !preflight.localPathWritable ||
+        !preflight.remoteShellReady
+      ) {
+        setAddProjectError(preflight.errors.join(" "));
+        return;
+      }
+
+      setIsAddingProject(true);
+      const existing = projects.find(
+        (project) =>
+          project.executionTarget.kind === "ssh" &&
+          project.executionTarget.host === host &&
+          (project.executionTarget.username ?? "") === sshProjectDraft.username.trim() &&
+          (project.executionTarget.port ?? 22) === (parsedPort.port ?? 22) &&
+          project.executionTarget.remotePath === remotePath,
+      );
+      if (existing) {
+        focusMostRecentThreadForProject(existing.id);
+        resetAddProjectState(false);
+        return;
+      }
+
+      const projectId = newProjectId();
+      const createdAt = new Date().toISOString();
+      const title =
+        sshProjectDraft.label.trim() || remotePath.split("/").findLast(isNonEmptyString) || host;
+      await api.orchestration.dispatchCommand({
+        type: "project.create",
+        commandId: newCommandId(),
+        projectId,
+        title,
+        workspaceRoot: preflight.resolvedLocalPath,
+        executionTarget: {
+          kind: "ssh",
+          ...(sshProjectDraft.label.trim() ? { label: sshProjectDraft.label.trim() } : {}),
+          host,
+          ...(sshProjectDraft.username.trim() ? { username: sshProjectDraft.username.trim() } : {}),
+          ...(parsedPort.port !== undefined ? { port: parsedPort.port } : {}),
+          remotePath,
+          sync: {
+            mode: "mutagen",
+            localPath: preflight.resolvedLocalPath,
+            ignores: parseExecutionTargetIgnores(sshProjectDraft.ignoresText),
+          },
+        },
+        defaultModel: DEFAULT_MODEL_BY_PROVIDER.codex,
+        createdAt,
+      });
+      await handleNewThread(projectId).catch(() => undefined);
+      resetAddProjectState(false);
+    } catch (error) {
+      setIsAddingProject(false);
+      setAddProjectError(
+        error instanceof Error ? error.message : "An error occurred while adding the SSH project.",
+      );
+    }
+  }, [
+    focusMostRecentThreadForProject,
+    handleNewThread,
+    isAddingProject,
+    parseSshProjectPort,
+    projects,
+    resetAddProjectState,
+    runSshProjectPreflight,
+    sshProjectDraft,
+    sshProjectPreflight,
+  ]);
+
   const handleAddProject = () => {
+    if (addProjectMode === "ssh") {
+      void addProjectFromSshTarget();
+      return;
+    }
     void addProjectFromPath(newCwd);
   };
 
-  const canAddProject = newCwd.trim().length > 0 && !isAddingProject;
+  const loadRemoteDirectory = useCallback(
+    async (directoryPath?: string) => {
+      const api = readNativeApi();
+      if (!api || isPickingFolder) return;
+      setIsPickingFolder(true);
+      setAddProjectError(null);
+      try {
+        const nextPath =
+          directoryPath?.trim() ||
+          remoteDirectoryBrowser?.listing.directoryPath ||
+          (await api.server
+            .getConfig()
+            .then((config) => config.cwd)
+            .catch(() => null)) ||
+          "/";
+        const listing = await api.projects.listDirectory({ path: nextPath, limit: 200 });
+        setRemoteDirectoryBrowser({ kind: "workspace", listing });
+        setNewCwd(listing.directoryPath);
+      } catch (error) {
+        setAddProjectError(
+          error instanceof Error ? error.message : "Unable to browse the remote workspace.",
+        );
+      } finally {
+        setIsPickingFolder(false);
+      }
+    },
+    [isPickingFolder, remoteDirectoryBrowser?.listing.directoryPath],
+  );
+
+  const loadSshDirectory = useCallback(
+    async (directoryPath?: string) => {
+      const api = readNativeApi();
+      if (!api || isPickingFolder) return;
+      const host = sshProjectDraft.host.trim();
+      if (!host) {
+        setAddProjectError("Enter the SSH host before browsing directories.");
+        return;
+      }
+      const parsedPort = parseSshProjectPort();
+      if (!parsedPort.ok) {
+        setAddProjectError(parsedPort.error);
+        return;
+      }
+
+      setIsPickingFolder(true);
+      setAddProjectError(null);
+      try {
+        const nextPath =
+          directoryPath?.trim() ||
+          remoteDirectoryBrowser?.listing.directoryPath ||
+          sshProjectDraft.remotePath.trim() ||
+          "/";
+        const listing = await api.projects.listSshDirectory({
+          host,
+          ...(sshProjectDraft.username.trim() ? { username: sshProjectDraft.username.trim() } : {}),
+          ...(parsedPort.port !== undefined ? { port: parsedPort.port } : {}),
+          path: nextPath,
+          limit: 200,
+        });
+        setRemoteDirectoryBrowser({ kind: "ssh", listing });
+        updateSshProjectDraft({ remotePath: listing.directoryPath });
+      } catch (error) {
+        setAddProjectError(
+          error instanceof Error ? error.message : "Unable to browse the SSH target.",
+        );
+      } finally {
+        setIsPickingFolder(false);
+      }
+    },
+    [
+      isPickingFolder,
+      parseSshProjectPort,
+      remoteDirectoryBrowser?.listing.directoryPath,
+      sshProjectDraft.host,
+      sshProjectDraft.remotePath,
+      sshProjectDraft.username,
+      updateSshProjectDraft,
+    ],
+  );
+
+  const createRemoteDirectory = useCallback(
+    async (name: string) => {
+      const api = readNativeApi();
+      const currentPath = remoteDirectoryBrowser?.listing.directoryPath;
+      if (!api || !currentPath) return;
+      setIsPickingFolder(true);
+      setAddProjectError(null);
+      try {
+        const listing = await api.projects.createDirectory({
+          path: currentPath,
+          name,
+        });
+        setRemoteDirectoryBrowser({ kind: "workspace", listing });
+        setNewCwd(listing.directoryPath);
+      } catch (error) {
+        setAddProjectError(
+          error instanceof Error ? error.message : "Unable to create the remote folder.",
+        );
+        throw error;
+      } finally {
+        setIsPickingFolder(false);
+      }
+    },
+    [remoteDirectoryBrowser?.listing.directoryPath],
+  );
+
+  const createSshDirectory = useCallback(
+    async (name: string) => {
+      const api = readNativeApi();
+      const host = sshProjectDraft.host.trim();
+      const currentPath = remoteDirectoryBrowser?.listing.directoryPath;
+      if (!api || !currentPath) return;
+      if (!host) {
+        setAddProjectError("Enter the SSH host before creating directories.");
+        return;
+      }
+      const parsedPort = parseSshProjectPort();
+      if (!parsedPort.ok) {
+        setAddProjectError(parsedPort.error);
+        return;
+      }
+      setIsPickingFolder(true);
+      setAddProjectError(null);
+      try {
+        const listing = await api.projects.createSshDirectory({
+          host,
+          ...(sshProjectDraft.username.trim() ? { username: sshProjectDraft.username.trim() } : {}),
+          ...(parsedPort.port !== undefined ? { port: parsedPort.port } : {}),
+          path: currentPath,
+          name,
+        });
+        setRemoteDirectoryBrowser({ kind: "ssh", listing });
+        updateSshProjectDraft({ remotePath: listing.directoryPath });
+      } catch (error) {
+        setAddProjectError(
+          error instanceof Error ? error.message : "Unable to create the SSH folder.",
+        );
+        throw error;
+      } finally {
+        setIsPickingFolder(false);
+      }
+    },
+    [
+      parseSshProjectPort,
+      remoteDirectoryBrowser?.listing.directoryPath,
+      sshProjectDraft.host,
+      sshProjectDraft.username,
+      updateSshProjectDraft,
+    ],
+  );
 
   const handlePickFolder = async () => {
     const api = readNativeApi();
     if (!api || isPickingFolder) return;
+    if (addProjectMode === "ssh") {
+      await loadSshDirectory();
+      return;
+    }
+    if (!activeWorkspace.isLocal) {
+      await loadRemoteDirectory(newCwd);
+      return;
+    }
     setIsPickingFolder(true);
     let pickedPath: string | null = null;
     try {
@@ -590,20 +1088,15 @@ export default function Sidebar() {
     }
     if (pickedPath) {
       await addProjectFromPath(pickedPath);
-    } else if (!shouldBrowseForProjectImmediately) {
+    } else {
       addProjectInputRef.current?.focus();
     }
     setIsPickingFolder(false);
   };
 
-  const handleStartAddProject = () => {
-    setAddProjectError(null);
-    if (shouldBrowseForProjectImmediately) {
-      void handlePickFolder();
-      return;
-    }
-    setAddingProject((prev) => !prev);
-  };
+  useEffect(() => {
+    setRemoteDirectoryBrowser(null);
+  }, [activeWorkspace.id, addProjectMode, addingProject]);
 
   const cancelRename = useCallback(() => {
     setRenamingThreadId(null);
@@ -654,30 +1147,64 @@ export default function Sidebar() {
     [],
   );
 
-  /**
-   * Delete a single thread: stop session, close terminal, dispatch delete,
-   * clean up drafts/state, and optionally remove orphaned worktree.
-   * Callers handle thread-level confirmation; this still prompts for worktree removal.
-   */
-  const deleteThread = useCallback(
-    async (
-      threadId: ThreadId,
-      opts: { deletedThreadIds?: ReadonlySet<ThreadId> } = {},
-    ): Promise<void> => {
+  const handleThreadContextMenu = useCallback(
+    async (threadId: ThreadId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
+      const clicked = await api.contextMenu.show(
+        [
+          { id: "rename", label: "Rename thread" },
+          { id: "mark-unread", label: "Mark unread" },
+          { id: "copy-thread-id", label: "Copy Thread ID" },
+          { id: "delete", label: "Delete", destructive: true },
+        ],
+        position,
+      );
       const thread = threads.find((t) => t.id === threadId);
       if (!thread) return;
+
+      if (clicked === "rename") {
+        setRenamingThreadId(threadId);
+        setRenamingTitle(thread.title);
+        renamingCommittedRef.current = false;
+        return;
+      }
+
+      if (clicked === "mark-unread") {
+        markThreadUnread(threadId);
+        return;
+      }
+      if (clicked === "copy-thread-id") {
+        try {
+          await copyTextToClipboard(threadId);
+          toastManager.add({
+            type: "success",
+            title: "Thread ID copied",
+            description: threadId,
+          });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Failed to copy thread ID",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+        return;
+      }
+      if (clicked !== "delete") return;
+      if (appSettings.confirmThreadDelete) {
+        const confirmed = await api.dialogs.confirm(
+          [
+            `Delete thread "${thread.title}"?`,
+            "This permanently clears conversation history for this thread.",
+          ].join("\n"),
+        );
+        if (!confirmed) {
+          return;
+        }
+      }
       const threadProject = projects.find((project) => project.id === thread.projectId);
-      // When bulk-deleting, exclude the other threads being deleted so
-      // getOrphanedWorktreePathForThread correctly detects that no surviving
-      // threads will reference this worktree.
-      const deletedIds = opts.deletedThreadIds;
-      const survivingThreads =
-        deletedIds && deletedIds.size > 0
-          ? threads.filter((t) => t.id === threadId || !deletedIds.has(t.id))
-          : threads;
-      const orphanedWorktreePath = getOrphanedWorktreePathForThread(survivingThreads, threadId);
+      const orphanedWorktreePath = getOrphanedWorktreePathForThread(threads, threadId);
       const displayWorktreePath = orphanedWorktreePath
         ? formatWorktreePathForDisplay(orphanedWorktreePath)
         : null;
@@ -705,15 +1232,16 @@ export default function Sidebar() {
       }
 
       try {
-        await api.terminal.close({ threadId, deleteHistory: true });
+        await api.terminal.close({
+          threadId,
+          deleteHistory: true,
+        });
       } catch {
         // Terminal may already be closed
       }
 
-      const allDeletedIds = deletedIds ?? new Set<ThreadId>();
       const shouldNavigateToFallback = routeThreadId === threadId;
-      const fallbackThreadId =
-        threads.find((entry) => entry.id !== threadId && !allDeletedIds.has(entry.id))?.id ?? null;
+      const fallbackThreadId = threads.find((entry) => entry.id !== threadId)?.id ?? null;
       await api.orchestration.dispatchCommand({
         type: "thread.delete",
         commandId: newCommandId(),
@@ -740,7 +1268,7 @@ export default function Sidebar() {
 
       try {
         await removeWorktreeMutation.mutateAsync({
-          cwd: threadProject.cwd,
+          cwd: resolveProjectExecutionRoot(threadProject),
           path: orphanedWorktreePath,
           force: true,
         });
@@ -748,7 +1276,7 @@ export default function Sidebar() {
         const message = error instanceof Error ? error.message : "Unknown error removing worktree.";
         console.error("Failed to remove orphaned worktree after thread deletion", {
           threadId,
-          projectCwd: threadProject.cwd,
+          projectCwd: resolveProjectExecutionRoot(threadProject),
           worktreePath: orphanedWorktreePath,
           error,
         });
@@ -760,9 +1288,11 @@ export default function Sidebar() {
       }
     },
     [
+      appSettings.confirmThreadDelete,
       clearComposerDraftForThread,
       clearProjectDraftThreadById,
       clearTerminalState,
+      markThreadUnread,
       navigate,
       projects,
       removeWorktreeMutation,
@@ -771,205 +1301,12 @@ export default function Sidebar() {
     ],
   );
 
-  const { copyToClipboard: copyThreadIdToClipboard } = useCopyToClipboard<{ threadId: ThreadId }>({
-    onCopy: (ctx) => {
-      toastManager.add({
-        type: "success",
-        title: "Thread ID copied",
-        description: ctx.threadId,
-      });
-    },
-    onError: (error) => {
-      toastManager.add({
-        type: "error",
-        title: "Failed to copy thread ID",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
-    },
-  });
-  const { copyToClipboard: copyPathToClipboard } = useCopyToClipboard<{ path: string }>({
-    onCopy: (ctx) => {
-      toastManager.add({
-        type: "success",
-        title: "Path copied",
-        description: ctx.path,
-      });
-    },
-    onError: (error) => {
-      toastManager.add({
-        type: "error",
-        title: "Failed to copy path",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
-    },
-  });
-  const handleThreadContextMenu = useCallback(
-    async (threadId: ThreadId, position: { x: number; y: number }) => {
-      const api = readNativeApi();
-      if (!api) return;
-      const thread = threads.find((t) => t.id === threadId);
-      if (!thread) return;
-      const threadWorkspacePath =
-        thread.worktreePath ?? projectCwdById.get(thread.projectId) ?? null;
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "rename", label: "Rename thread" },
-          { id: "mark-unread", label: "Mark unread" },
-          { id: "copy-path", label: "Copy Path" },
-          { id: "copy-thread-id", label: "Copy Thread ID" },
-          { id: "delete", label: "Delete", destructive: true },
-        ],
-        position,
-      );
-
-      if (clicked === "rename") {
-        setRenamingThreadId(threadId);
-        setRenamingTitle(thread.title);
-        renamingCommittedRef.current = false;
-        return;
-      }
-
-      if (clicked === "mark-unread") {
-        markThreadUnread(threadId);
-        return;
-      }
-      if (clicked === "copy-path") {
-        if (!threadWorkspacePath) {
-          toastManager.add({
-            type: "error",
-            title: "Path unavailable",
-            description: "This thread does not have a workspace path to copy.",
-          });
-          return;
-        }
-        copyPathToClipboard(threadWorkspacePath, { path: threadWorkspacePath });
-        return;
-      }
-      if (clicked === "copy-thread-id") {
-        copyThreadIdToClipboard(threadId, { threadId });
-        return;
-      }
-      if (clicked !== "delete") return;
-      if (appSettings.confirmThreadDelete) {
-        const confirmed = await api.dialogs.confirm(
-          [
-            `Delete thread "${thread.title}"?`,
-            "This permanently clears conversation history for this thread.",
-          ].join("\n"),
-        );
-        if (!confirmed) {
-          return;
-        }
-      }
-      await deleteThread(threadId);
-    },
-    [
-      appSettings.confirmThreadDelete,
-      copyPathToClipboard,
-      copyThreadIdToClipboard,
-      deleteThread,
-      markThreadUnread,
-      projectCwdById,
-      threads,
-    ],
-  );
-
-  const handleMultiSelectContextMenu = useCallback(
-    async (position: { x: number; y: number }) => {
-      const api = readNativeApi();
-      if (!api) return;
-      const ids = [...selectedThreadIds];
-      if (ids.length === 0) return;
-      const count = ids.length;
-
-      const clicked = await api.contextMenu.show(
-        [
-          { id: "mark-unread", label: `Mark unread (${count})` },
-          { id: "delete", label: `Delete (${count})`, destructive: true },
-        ],
-        position,
-      );
-
-      if (clicked === "mark-unread") {
-        for (const id of ids) {
-          markThreadUnread(id);
-        }
-        clearSelection();
-        return;
-      }
-
-      if (clicked !== "delete") return;
-
-      if (appSettings.confirmThreadDelete) {
-        const confirmed = await api.dialogs.confirm(
-          [
-            `Delete ${count} thread${count === 1 ? "" : "s"}?`,
-            "This permanently clears conversation history for these threads.",
-          ].join("\n"),
-        );
-        if (!confirmed) return;
-      }
-
-      const deletedIds = new Set<ThreadId>(ids);
-      for (const id of ids) {
-        await deleteThread(id, { deletedThreadIds: deletedIds });
-      }
-      removeFromSelection(ids);
-    },
-    [
-      appSettings.confirmThreadDelete,
-      clearSelection,
-      deleteThread,
-      markThreadUnread,
-      removeFromSelection,
-      selectedThreadIds,
-    ],
-  );
-
-  const handleThreadClick = useCallback(
-    (event: MouseEvent, threadId: ThreadId, orderedProjectThreadIds: readonly ThreadId[]) => {
-      const isMac = isMacPlatform(navigator.platform);
-      const isModClick = isMac ? event.metaKey : event.ctrlKey;
-      const isShiftClick = event.shiftKey;
-
-      if (isModClick) {
-        event.preventDefault();
-        toggleThreadSelection(threadId);
-        return;
-      }
-
-      if (isShiftClick) {
-        event.preventDefault();
-        rangeSelectTo(threadId, orderedProjectThreadIds);
-        return;
-      }
-
-      // Plain click — clear selection, set anchor for future shift-clicks, and navigate
-      if (selectedThreadIds.size > 0) {
-        clearSelection();
-      }
-      setSelectionAnchor(threadId);
-      void navigate({
-        to: "/$threadId",
-        params: { threadId },
-      });
-    },
-    [
-      clearSelection,
-      navigate,
-      rangeSelectTo,
-      selectedThreadIds.size,
-      setSelectionAnchor,
-      toggleThreadSelection,
-    ],
-  );
-
   const handleProjectContextMenu = useCallback(
     async (projectId: ProjectId, position: { x: number; y: number }) => {
       const api = readNativeApi();
       if (!api) return;
       const clicked = await api.contextMenu.show(
-        [{ id: "delete", label: "Remove project", destructive: true }],
+        [{ id: "delete", label: "Delete", destructive: true }],
         position,
       );
       if (clicked !== "delete") return;
@@ -982,12 +1319,14 @@ export default function Sidebar() {
         toastManager.add({
           type: "warning",
           title: "Project is not empty",
-          description: "Delete all threads in this project before removing it.",
+          description: "Delete all threads in this project before deleting it.",
         });
         return;
       }
 
-      const confirmed = await api.dialogs.confirm(`Remove project "${project.name}"?`);
+      const confirmed = await api.dialogs.confirm(
+        [`Delete project "${project.name}"?`, "This action cannot be undone."].join("\n"),
+      );
       if (!confirmed) return;
 
       try {
@@ -1002,11 +1341,11 @@ export default function Sidebar() {
           projectId,
         });
       } catch (error) {
-        const message = error instanceof Error ? error.message : "Unknown error removing project.";
+        const message = error instanceof Error ? error.message : "Unknown error deleting project.";
         console.error("Failed to remove project", { projectId, error });
         toastManager.add({
           type: "error",
-          title: `Failed to remove "${project.name}"`,
+          title: `Failed to delete "${project.name}"`,
           description: message,
         });
       }
@@ -1020,436 +1359,37 @@ export default function Sidebar() {
     ],
   );
 
-  const projectDnDSensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: { distance: 6 },
-    }),
-  );
-  const projectCollisionDetection = useCallback<CollisionDetection>((args) => {
-    const pointerCollisions = pointerWithin(args);
-    if (pointerCollisions.length > 0) {
-      return pointerCollisions;
-    }
-
-    return closestCorners(args);
-  }, []);
-
-  const handleProjectDragEnd = useCallback(
-    (event: DragEndEvent) => {
-      if (appSettings.sidebarProjectSortOrder !== "manual") {
-        dragInProgressRef.current = false;
-        return;
-      }
-      dragInProgressRef.current = false;
-      const { active, over } = event;
-      if (!over || active.id === over.id) return;
-      const activeProject = projects.find((project) => project.id === active.id);
-      const overProject = projects.find((project) => project.id === over.id);
-      if (!activeProject || !overProject) return;
-      reorderProjects(activeProject.id, overProject.id);
-    },
-    [appSettings.sidebarProjectSortOrder, projects, reorderProjects],
-  );
-
-  const handleProjectDragStart = useCallback(
-    (_event: DragStartEvent) => {
-      if (appSettings.sidebarProjectSortOrder !== "manual") {
-        return;
-      }
-      dragInProgressRef.current = true;
-      suppressProjectClickAfterDragRef.current = true;
-    },
-    [appSettings.sidebarProjectSortOrder],
-  );
-
-  const handleProjectDragCancel = useCallback((_event: DragCancelEvent) => {
-    dragInProgressRef.current = false;
-  }, []);
-
-  const animatedProjectListsRef = useRef(new WeakSet<HTMLElement>());
-  const attachProjectListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedProjectListsRef.current.has(node)) {
-      return;
-    }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedProjectListsRef.current.add(node);
-  }, []);
-
-  const animatedThreadListsRef = useRef(new WeakSet<HTMLElement>());
-  const attachThreadListAutoAnimateRef = useCallback((node: HTMLElement | null) => {
-    if (!node || animatedThreadListsRef.current.has(node)) {
-      return;
-    }
-    autoAnimate(node, SIDEBAR_LIST_ANIMATION_OPTIONS);
-    animatedThreadListsRef.current.add(node);
-  }, []);
-
-  const handleProjectTitlePointerDownCapture = useCallback(() => {
-    suppressProjectClickAfterDragRef.current = false;
-  }, []);
-
-  const sortedProjects = useMemo(
-    () => sortProjectsForSidebar(projects, threads, appSettings.sidebarProjectSortOrder),
-    [appSettings.sidebarProjectSortOrder, projects, threads],
-  );
-  const isManualProjectSorting = appSettings.sidebarProjectSortOrder === "manual";
-
-  function renderProjectItem(
-    project: (typeof sortedProjects)[number],
-    dragHandleProps: SortableProjectHandleProps | null,
-  ) {
-    const projectThreads = sortThreadsForSidebar(
-      threads.filter((thread) => thread.projectId === project.id),
-      appSettings.sidebarThreadSortOrder,
-    );
-    const projectStatus = resolveProjectStatusIndicator(
-      projectThreads.map((thread) =>
-        resolveThreadStatusPill({
-          thread,
-          hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
-          hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
-        }),
-      ),
-    );
-    const activeThreadId = routeThreadId ?? undefined;
-    const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
-    const pinnedCollapsedThread =
-      !project.expanded && activeThreadId
-        ? (projectThreads.find((thread) => thread.id === activeThreadId) ?? null)
-        : null;
-    const shouldShowThreadPanel = project.expanded || pinnedCollapsedThread !== null;
-    const { hasHiddenThreads, visibleThreads } = getVisibleThreadsForProject({
-      threads: projectThreads,
-      activeThreadId,
-      isThreadListExpanded,
-      previewLimit: THREAD_PREVIEW_LIMIT,
-    });
-    const orderedProjectThreadIds = projectThreads.map((thread) => thread.id);
-    const renderedThreads = pinnedCollapsedThread ? [pinnedCollapsedThread] : visibleThreads;
-    const renderThreadRow = (thread: (typeof projectThreads)[number]) => {
-      const isActive = routeThreadId === thread.id;
-      const isSelected = selectedThreadIds.has(thread.id);
-      const isHighlighted = isActive || isSelected;
-      const threadStatus = resolveThreadStatusPill({
-        thread,
-        hasPendingApprovals: derivePendingApprovals(thread.activities).length > 0,
-        hasPendingUserInput: derivePendingUserInputs(thread.activities).length > 0,
-      });
-      const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
-      const terminalStatus = terminalStatusFromRunningIds(
-        selectThreadTerminalState(terminalStateByThreadId, thread.id).runningTerminalIds,
-      );
-
-      return (
-        <SidebarMenuSubItem key={thread.id} className="w-full" data-thread-item>
-          <SidebarMenuSubButton
-            render={<div role="button" tabIndex={0} />}
-            size="sm"
-            isActive={isActive}
-            className={resolveThreadRowClassName({
-              isActive,
-              isSelected,
-            })}
-            onClick={(event) => {
-              handleThreadClick(event, thread.id, orderedProjectThreadIds);
-            }}
-            onKeyDown={(event) => {
-              if (event.key !== "Enter" && event.key !== " ") return;
-              event.preventDefault();
-              if (selectedThreadIds.size > 0) {
-                clearSelection();
-              }
-              setSelectionAnchor(thread.id);
-              void navigate({
-                to: "/$threadId",
-                params: { threadId: thread.id },
-              });
-            }}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              if (selectedThreadIds.size > 0 && selectedThreadIds.has(thread.id)) {
-                void handleMultiSelectContextMenu({
-                  x: event.clientX,
-                  y: event.clientY,
-                });
-              } else {
-                if (selectedThreadIds.size > 0) {
-                  clearSelection();
-                }
-                void handleThreadContextMenu(thread.id, {
-                  x: event.clientX,
-                  y: event.clientY,
-                });
-              }
-            }}
-          >
-            <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
-              {prStatus && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <button
-                        type="button"
-                        aria-label={prStatus.tooltip}
-                        className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
-                        onClick={(event) => {
-                          openPrLink(event, prStatus.url);
-                        }}
-                      >
-                        <GitPullRequestIcon className="size-3" />
-                      </button>
-                    }
-                  />
-                  <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
-                </Tooltip>
-              )}
-              {threadStatus && (
-                <span
-                  className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
-                >
-                  <span
-                    className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
-                      threadStatus.pulse ? "animate-pulse" : ""
-                    }`}
-                  />
-                  <span className="hidden md:inline">{threadStatus.label}</span>
-                </span>
-              )}
-              {renamingThreadId === thread.id ? (
-                <input
-                  ref={(el) => {
-                    if (el && renamingInputRef.current !== el) {
-                      renamingInputRef.current = el;
-                      el.focus();
-                      el.select();
-                    }
-                  }}
-                  className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
-                  value={renamingTitle}
-                  onChange={(e) => setRenamingTitle(e.target.value)}
-                  onKeyDown={(e) => {
-                    e.stopPropagation();
-                    if (e.key === "Enter") {
-                      e.preventDefault();
-                      renamingCommittedRef.current = true;
-                      void commitRename(thread.id, renamingTitle, thread.title);
-                    } else if (e.key === "Escape") {
-                      e.preventDefault();
-                      renamingCommittedRef.current = true;
-                      cancelRename();
-                    }
-                  }}
-                  onBlur={() => {
-                    if (!renamingCommittedRef.current) {
-                      void commitRename(thread.id, renamingTitle, thread.title);
-                    }
-                  }}
-                  onClick={(e) => e.stopPropagation()}
-                />
-              ) : (
-                <span className="min-w-0 flex-1 truncate text-xs">{thread.title}</span>
-              )}
-            </div>
-            <div className="ml-auto flex shrink-0 items-center gap-1.5">
-              {terminalStatus && (
-                <span
-                  role="img"
-                  aria-label={terminalStatus.label}
-                  title={terminalStatus.label}
-                  className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
-                >
-                  <TerminalIcon
-                    className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
-                  />
-                </span>
-              )}
-              <span
-                className={`text-[10px] ${
-                  isHighlighted
-                    ? "text-foreground/72 dark:text-foreground/82"
-                    : "text-muted-foreground/40"
-                }`}
-              >
-                {formatRelativeTime(thread.updatedAt ?? thread.createdAt)}
-              </span>
-            </div>
-          </SidebarMenuSubButton>
-        </SidebarMenuSubItem>
-      );
-    };
-
-    return (
-      <Collapsible className="group/collapsible" open={shouldShowThreadPanel}>
-        <div className="group/project-header relative">
-          <SidebarMenuButton
-            ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
-            size="sm"
-            className={`gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground ${
-              isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : "cursor-pointer"
-            }`}
-            {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
-            {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.listeners : {})}
-            onPointerDownCapture={handleProjectTitlePointerDownCapture}
-            onClick={(event) => handleProjectTitleClick(event, project.id)}
-            onKeyDown={(event) => handleProjectTitleKeyDown(event, project.id)}
-            onContextMenu={(event) => {
-              event.preventDefault();
-              void handleProjectContextMenu(project.id, {
-                x: event.clientX,
-                y: event.clientY,
-              });
-            }}
-          >
-            {!project.expanded && projectStatus ? (
-              <span
-                aria-hidden="true"
-                title={projectStatus.label}
-                className={`-ml-0.5 relative inline-flex size-3.5 shrink-0 items-center justify-center ${projectStatus.colorClass}`}
-              >
-                <span className="absolute inset-0 flex items-center justify-center transition-opacity duration-150 group-hover/project-header:opacity-0">
-                  <span
-                    className={`size-[9px] rounded-full ${projectStatus.dotClass} ${
-                      projectStatus.pulse ? "animate-pulse" : ""
-                    }`}
-                  />
-                </span>
-                <ChevronRightIcon className="absolute inset-0 m-auto size-3.5 text-muted-foreground/70 opacity-0 transition-opacity duration-150 group-hover/project-header:opacity-100" />
-              </span>
-            ) : (
-              <ChevronRightIcon
-                className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
-                  project.expanded ? "rotate-90" : ""
-                }`}
-              />
-            )}
-            <ProjectFavicon cwd={project.cwd} />
-            <span className="flex-1 truncate text-xs font-medium text-foreground/90">
-              {project.name}
-            </span>
-          </SidebarMenuButton>
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <SidebarMenuAction
-                  render={
-                    <button
-                      type="button"
-                      aria-label={`Create new thread in ${project.name}`}
-                      data-testid="new-thread-button"
-                    />
-                  }
-                  showOnHover
-                  className="top-1 right-1 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
-                  onClick={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    void handleNewThread(project.id, {
-                      envMode: resolveSidebarNewThreadEnvMode({
-                        defaultEnvMode: appSettings.defaultThreadEnvMode,
-                      }),
-                    });
-                  }}
-                >
-                  <SquarePenIcon className="size-3.5" />
-                </SidebarMenuAction>
-              }
-            />
-            <TooltipPopup side="top">
-              {newThreadShortcutLabel ? `New thread (${newThreadShortcutLabel})` : "New thread"}
-            </TooltipPopup>
-          </Tooltip>
-        </div>
-
-        <CollapsibleContent>
-          <SidebarMenuSub
-            ref={attachThreadListAutoAnimateRef}
-            className="mx-1 my-0 w-full translate-x-0 gap-0.5 px-1.5 py-0"
-          >
-            {renderedThreads.map((thread) => renderThreadRow(thread))}
-
-            {project.expanded && hasHiddenThreads && !isThreadListExpanded && (
-              <SidebarMenuSubItem className="w-full">
-                <SidebarMenuSubButton
-                  render={<button type="button" />}
-                  data-thread-selection-safe
-                  size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                  onClick={() => {
-                    expandThreadListForProject(project.id);
-                  }}
-                >
-                  <span>Show more</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            )}
-            {project.expanded && hasHiddenThreads && isThreadListExpanded && (
-              <SidebarMenuSubItem className="w-full">
-                <SidebarMenuSubButton
-                  render={<button type="button" />}
-                  data-thread-selection-safe
-                  size="sm"
-                  className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
-                  onClick={() => {
-                    collapseThreadListForProject(project.id);
-                  }}
-                >
-                  <span>Show less</span>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            )}
-          </SidebarMenuSub>
-        </CollapsibleContent>
-      </Collapsible>
-    );
-  }
-
-  const handleProjectTitleClick = useCallback(
-    (event: React.MouseEvent<HTMLButtonElement>, projectId: ProjectId) => {
-      if (dragInProgressRef.current) {
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      if (suppressProjectClickAfterDragRef.current) {
-        // Consume the synthetic click emitted after a drag release.
-        suppressProjectClickAfterDragRef.current = false;
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-      if (selectedThreadIds.size > 0) {
-        clearSelection();
-      }
-      toggleProject(projectId);
-    },
-    [clearSelection, selectedThreadIds.size, toggleProject],
-  );
-
-  const handleProjectTitleKeyDown = useCallback(
-    (event: React.KeyboardEvent<HTMLButtonElement>, projectId: ProjectId) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
-      event.preventDefault();
-      if (dragInProgressRef.current) {
-        return;
-      }
-      toggleProject(projectId);
-    },
-    [toggleProject],
-  );
-
   useEffect(() => {
-    const onMouseDown = (event: globalThis.MouseEvent) => {
-      if (selectedThreadIds.size === 0) return;
-      const target = event.target instanceof HTMLElement ? event.target : null;
-      if (!shouldClearThreadSelectionOnMouseDown(target)) return;
-      clearSelection();
+    const onWindowKeyDown = (event: KeyboardEvent) => {
+      const activeThread = routeThreadId
+        ? threads.find((thread) => thread.id === routeThreadId)
+        : undefined;
+      const activeDraftThread = routeThreadId ? getDraftThread(routeThreadId) : null;
+      if (isChatNewLocalShortcut(event, keybindings)) {
+        const projectId =
+          activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+        if (!projectId) return;
+        event.preventDefault();
+        void handleNewThread(projectId);
+        return;
+      }
+
+      if (!isChatNewShortcut(event, keybindings)) return;
+      const projectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? projects[0]?.id;
+      if (!projectId) return;
+      event.preventDefault();
+      void handleNewThread(projectId, {
+        branch: activeThread?.branch ?? activeDraftThread?.branch ?? null,
+        worktreePath: activeThread?.worktreePath ?? activeDraftThread?.worktreePath ?? null,
+        envMode: activeDraftThread?.envMode ?? (activeThread?.worktreePath ? "worktree" : "local"),
+      });
     };
 
-    window.addEventListener("mousedown", onMouseDown);
+    window.addEventListener("keydown", onWindowKeyDown);
     return () => {
-      window.removeEventListener("mousedown", onMouseDown);
+      window.removeEventListener("keydown", onWindowKeyDown);
     };
-  }, [clearSelection, selectedThreadIds.size]);
+  }, [getDraftThread, handleNewThread, keybindings, projects, routeThreadId, threads]);
 
   useEffect(() => {
     if (!isElectron) return;
@@ -1511,9 +1451,154 @@ export default function Sidebar() {
         : shouldHighlightDesktopUpdateError(desktopUpdateState)
           ? "text-rose-500 animate-pulse"
           : "text-amber-500 animate-pulse";
-  const newThreadShortcutLabel =
-    shortcutLabelForCommand(keybindings, "chat.newLocal") ??
-    shortcutLabelForCommand(keybindings, "chat.new");
+  const newThreadShortcutLabel = useMemo(
+    () =>
+      shortcutLabelForCommand(keybindings, "chat.newLocal") ??
+      shortcutLabelForCommand(keybindings, "chat.new"),
+    [keybindings],
+  );
+  const activeWorkspaceIndex = useMemo(
+    () =>
+      Math.max(
+        0,
+        workspaceOptions.findIndex((workspace) => workspace.id === activeWorkspace.id),
+      ),
+    [activeWorkspace.id, workspaceOptions],
+  );
+  const switchWorkspaceByOffset = useCallback(
+    (offset: number) => {
+      if (workspaceOptions.length <= 1 || offset === 0) {
+        return;
+      }
+      const nextIndex = Math.min(
+        workspaceOptions.length - 1,
+        Math.max(0, activeWorkspaceIndex + offset),
+      );
+      const nextWorkspace = workspaceOptions[nextIndex];
+      if (nextWorkspace && nextWorkspace.id !== activeWorkspace.id) {
+        updateSettings({ activeWorkspaceId: nextWorkspace.id });
+      }
+    },
+    [activeWorkspace.id, activeWorkspaceIndex, updateSettings, workspaceOptions],
+  );
+  const handleWorkspaceSwipeDelta = useCallback(
+    (deltaX: number) => {
+      const now = Date.now();
+      if (
+        workspaceOptions.length <= 1 ||
+        now - workspaceLastGestureAtRef.current < WORKSPACE_SWIPE_COOLDOWN_MS
+      ) {
+        return false;
+      }
+
+      if (Math.abs(deltaX) < WORKSPACE_POINTER_SWIPE_THRESHOLD_PX) {
+        return false;
+      }
+
+      workspaceLastGestureAtRef.current = now;
+      switchWorkspaceByOffset(deltaX < 0 ? -1 : 1);
+      return true;
+    },
+    [switchWorkspaceByOffset, workspaceOptions.length],
+  );
+  const sidebarWorkspaceSwipeHandlers = useMemo(
+    () => ({
+      onPointerDownCapture: (event: ReactPointerEvent<HTMLElement>) => {
+        workspaceSwipeStartXRef.current = event.clientX;
+        workspaceSwipeHandledRef.current = false;
+      },
+      onPointerMoveCapture: (event: ReactPointerEvent<HTMLElement>) => {
+        if (workspaceSwipeStartXRef.current === null || workspaceSwipeHandledRef.current) {
+          return;
+        }
+        if (handleWorkspaceSwipeDelta(event.clientX - workspaceSwipeStartXRef.current)) {
+          workspaceSwipeHandledRef.current = true;
+        }
+      },
+      onPointerUpCapture: () => {
+        workspaceSwipeStartXRef.current = null;
+        workspaceSwipeHandledRef.current = false;
+      },
+      onPointerCancelCapture: () => {
+        workspaceSwipeStartXRef.current = null;
+        workspaceSwipeHandledRef.current = false;
+      },
+    }),
+    [handleWorkspaceSwipeDelta],
+  );
+
+  useEffect(() => {
+    return () => {
+      if (workspaceWheelResetTimeoutRef.current !== null) {
+        window.clearTimeout(workspaceWheelResetTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    const sidebarGestureElement = sidebarGestureRef.current;
+    if (!sidebarGestureElement) {
+      return;
+    }
+
+    const wheelListenerOptions: AddEventListenerOptions = {
+      capture: true,
+      passive: false,
+    };
+
+    const resetWheelGesture = () => {
+      workspaceWheelDeltaRef.current = 0;
+      workspaceWheelVerticalDeltaRef.current = 0;
+      workspaceWheelHandledRef.current = false;
+      workspaceWheelResetTimeoutRef.current = null;
+    };
+
+    const handleWheelGesture = (event: WheelEvent) => {
+      if (workspaceOptions.length <= 1 || Math.abs(event.deltaX) < 1) {
+        return;
+      }
+
+      if (workspaceWheelResetTimeoutRef.current !== null) {
+        window.clearTimeout(workspaceWheelResetTimeoutRef.current);
+      }
+      workspaceWheelResetTimeoutRef.current = window.setTimeout(
+        resetWheelGesture,
+        WORKSPACE_WHEEL_RESET_MS,
+      );
+      workspaceWheelDeltaRef.current += event.deltaX;
+      workspaceWheelVerticalDeltaRef.current += event.deltaY;
+
+      if (workspaceWheelHandledRef.current) {
+        event.preventDefault();
+        return;
+      }
+
+      const absoluteHorizontalDelta = Math.abs(workspaceWheelDeltaRef.current);
+      const absoluteVerticalDelta = Math.abs(workspaceWheelVerticalDeltaRef.current);
+      if (absoluteHorizontalDelta < WORKSPACE_WHEEL_SWIPE_THRESHOLD_PX) {
+        return;
+      }
+      if (absoluteVerticalDelta > 0 && absoluteHorizontalDelta < absoluteVerticalDelta * 0.7) {
+        return;
+      }
+
+      if (!handleWorkspaceSwipeDelta(workspaceWheelDeltaRef.current)) {
+        return;
+      }
+
+      workspaceWheelHandledRef.current = true;
+      event.preventDefault();
+    };
+
+    sidebarGestureElement.addEventListener("wheel", handleWheelGesture, wheelListenerOptions);
+    return () => {
+      sidebarGestureElement.removeEventListener("wheel", handleWheelGesture, wheelListenerOptions);
+      if (workspaceWheelResetTimeoutRef.current !== null) {
+        window.clearTimeout(workspaceWheelResetTimeoutRef.current);
+      }
+      resetWheelGesture();
+    };
+  }, [handleWorkspaceSwipeDelta, workspaceOptions.length]);
 
   const handleDesktopUpdateButtonClick = useCallback(() => {
     const bridge = window.desktopBridge;
@@ -1594,33 +1679,40 @@ export default function Sidebar() {
   const wordmark = (
     <div className="flex items-center gap-2">
       <SidebarTrigger className="shrink-0 md:hidden" />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <div className="flex min-w-0 flex-1 items-center gap-1 ml-1 cursor-pointer">
-              <T3Wordmark />
-              <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
-                Code
-              </span>
-              <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
-                {APP_STAGE_LABEL}
-              </span>
-            </div>
-          }
-        />
-        <TooltipPopup side="bottom" sideOffset={2}>
-          Version {APP_VERSION}
-        </TooltipPopup>
-      </Tooltip>
+      <div className="flex min-w-0 flex-1 items-center gap-1 mt-1.5 ml-1">
+        <T3Wordmark />
+        <span className="truncate text-sm font-medium tracking-tight text-muted-foreground">
+          Code
+        </span>
+        <span className="rounded-full bg-muted/50 px-1.5 py-0.5 text-[8px] font-medium uppercase tracking-[0.18em] text-muted-foreground/60">
+          {APP_STAGE_LABEL}
+        </span>
+      </div>
     </div>
   );
 
   return (
-    <>
-      {isElectron ? (
-        <>
-          <SidebarHeader className="drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[90px]">
-            {wordmark}
+    <div
+      ref={sidebarGestureRef}
+      className="flex h-full min-h-0 w-full flex-col"
+      {...sidebarWorkspaceSwipeHandlers}
+    >
+      <SidebarHeader
+        className={
+          isElectron
+            ? "drag-region h-[52px] flex-row items-center gap-2 px-4 py-0 pl-[82px]"
+            : "gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3"
+        }
+      >
+        {isElectron ? (
+          <>
+            <div className="flex min-w-0 flex-1 items-center gap-3">
+              {wordmark}
+              <ActiveWorkspaceBadge
+                activeWorkspaceId={activeWorkspace.id}
+                activeWorkspaceName={activeWorkspace.name}
+              />
+            </div>
             {showDesktopUpdateButton && (
               <Tooltip>
                 <TooltipTrigger
@@ -1640,13 +1732,19 @@ export default function Sidebar() {
                 <TooltipPopup side="bottom">{desktopUpdateTooltip}</TooltipPopup>
               </Tooltip>
             )}
-          </SidebarHeader>
-        </>
-      ) : (
-        <SidebarHeader className="gap-3 px-3 py-2 sm:gap-2.5 sm:px-4 sm:py-3">
-          {wordmark}
-        </SidebarHeader>
-      )}
+          </>
+        ) : (
+          <div className="flex flex-col gap-2">
+            {wordmark}
+            <WorkspaceSwitcher
+              activeWorkspaceId={activeWorkspace.id}
+              activeWorkspaceName={activeWorkspace.name}
+              workspaceIdsAndNames={workspaceOptions}
+              onChange={(workspaceId) => updateSettings({ activeWorkspaceId: workspaceId })}
+            />
+          </div>
+        )}
+      </SidebarHeader>
 
       <SidebarContent className="gap-0">
         {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
@@ -1677,87 +1775,198 @@ export default function Sidebar() {
             <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
               Projects
             </span>
-            <div className="flex items-center gap-1">
-              <ProjectSortMenu
-                projectSortOrder={appSettings.sidebarProjectSortOrder}
-                threadSortOrder={appSettings.sidebarThreadSortOrder}
-                onProjectSortOrderChange={(sortOrder) => {
-                  updateSettings({ sidebarProjectSortOrder: sortOrder });
-                }}
-                onThreadSortOrderChange={(sortOrder) => {
-                  updateSettings({ sidebarThreadSortOrder: sortOrder });
-                }}
-              />
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <button
-                      type="button"
-                      aria-label={shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
-                      aria-pressed={shouldShowProjectPathEntry}
-                      className="inline-flex size-5 cursor-pointer items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
-                      onClick={handleStartAddProject}
-                    />
-                  }
-                >
-                  <PlusIcon
-                    className={`size-3.5 transition-transform duration-150 ${
-                      shouldShowProjectPathEntry ? "rotate-45" : "rotate-0"
-                    }`}
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label="Add project"
+                    className="inline-flex size-5 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-accent hover:text-foreground"
+                    onClick={() => {
+                      if (addingProject) {
+                        resetAddProjectState(false);
+                        return;
+                      }
+                      resetAddProjectState(true);
+                    }}
                   />
-                </TooltipTrigger>
-                <TooltipPopup side="right">
-                  {shouldShowProjectPathEntry ? "Cancel add project" : "Add project"}
-                </TooltipPopup>
-              </Tooltip>
-            </div>
+                }
+              >
+                <PlusIcon className="size-3.5" />
+              </TooltipTrigger>
+              <TooltipPopup side="right">Add project</TooltipPopup>
+            </Tooltip>
           </div>
 
-          {shouldShowProjectPathEntry && (
+          {addingProject && (
             <div className="mb-2 px-1">
-              {isElectron && (
+              <div className="mb-1.5">
+                <Select
+                  value={addProjectMode}
+                  onValueChange={(value) => {
+                    if (value !== "workspace-local" && value !== "ssh") return;
+                    setAddProjectMode(value);
+                    setAddProjectError(null);
+                    setRemoteDirectoryBrowser(null);
+                    setSshProjectPreflight(null);
+                  }}
+                >
+                  <SelectTrigger className="h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectPopup>
+                    <SelectItem value="workspace-local">This server</SelectItem>
+                    <SelectItem value="ssh">SSH + Mutagen</SelectItem>
+                  </SelectPopup>
+                </Select>
+              </div>
+              {(isElectron || !activeWorkspace.isLocal || addProjectMode === "ssh") && (
                 <button
                   type="button"
                   className="mb-1.5 flex w-full items-center justify-center gap-2 rounded-md border border-border bg-secondary py-1.5 text-xs text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-60"
                   onClick={() => void handlePickFolder()}
-                  disabled={isPickingFolder || isAddingProject}
+                  disabled={isPickingFolder || isAddingProject || isCheckingSshProject}
                 >
                   <FolderIcon className="size-3.5" />
-                  {isPickingFolder ? "Picking folder..." : "Browse for folder"}
+                  {isPickingFolder
+                    ? addProjectMode === "ssh"
+                      ? "Loading SSH folders..."
+                      : activeWorkspace.isLocal
+                        ? "Picking folder..."
+                        : "Loading folders..."
+                    : addProjectMode === "ssh"
+                      ? "Browse SSH folders"
+                      : activeWorkspace.isLocal
+                        ? "Browse for folder"
+                        : "Browse remote folders"}
                 </button>
               )}
-              <div className="flex gap-1.5">
-                <input
-                  ref={addProjectInputRef}
-                  className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
-                    addProjectError
-                      ? "border-red-500/70 focus:border-red-500"
-                      : "border-border focus:border-ring"
-                  }`}
-                  placeholder="/path/to/project"
-                  value={newCwd}
-                  onChange={(event) => {
-                    setNewCwd(event.target.value);
-                    setAddProjectError(null);
-                  }}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") handleAddProject();
-                    if (event.key === "Escape") {
-                      setAddingProject(false);
-                      setAddProjectError(null);
+              {addProjectMode === "ssh" ? (
+                <div className="space-y-1.5">
+                  <input
+                    className="w-full rounded-md border border-border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    placeholder="Label (optional)"
+                    value={sshProjectDraft.label}
+                    onChange={(event) => updateSshProjectDraft({ label: event.target.value })}
+                    autoFocus
+                  />
+                  <div className="grid grid-cols-[minmax(0,1fr)_88px] gap-1.5">
+                    <input
+                      className="min-w-0 rounded-md border border-border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                      placeholder="SSH host"
+                      value={sshProjectDraft.host}
+                      onChange={(event) => updateSshProjectDraft({ host: event.target.value })}
+                    />
+                    <input
+                      className="rounded-md border border-border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                      placeholder="Port"
+                      value={sshProjectDraft.port}
+                      onChange={(event) => updateSshProjectDraft({ port: event.target.value })}
+                    />
+                  </div>
+                  <input
+                    className="w-full rounded-md border border-border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    placeholder="SSH username (optional)"
+                    value={sshProjectDraft.username}
+                    onChange={(event) => updateSshProjectDraft({ username: event.target.value })}
+                  />
+                  <input
+                    ref={addProjectInputRef}
+                    className={`w-full rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
+                      addProjectError
+                        ? "border-red-500/70 focus:border-red-500"
+                        : "border-border focus:border-ring"
+                    }`}
+                    placeholder="/srv/projects/my-repo"
+                    value={sshProjectDraft.remotePath}
+                    onChange={(event) => updateSshProjectDraft({ remotePath: event.target.value })}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") handleAddProject();
+                      if (event.key === "Escape") {
+                        resetAddProjectState(false);
+                      }
+                    }}
+                  />
+                  <input
+                    className="w-full rounded-md border border-border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    placeholder="Local mirror path override (optional)"
+                    value={sshProjectDraft.localPathOverride}
+                    onChange={(event) =>
+                      updateSshProjectDraft({ localPathOverride: event.target.value })
                     }
-                  }}
-                  autoFocus
-                />
-                <button
-                  type="button"
-                  className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
-                  onClick={handleAddProject}
-                  disabled={!canAddProject}
-                >
-                  {isAddingProject ? "Adding..." : "Add"}
-                </button>
-              </div>
+                  />
+                  <textarea
+                    className="min-h-[72px] w-full rounded-md border border-border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-ring focus:outline-none"
+                    placeholder="Ignore patterns, one per line"
+                    value={sshProjectDraft.ignoresText}
+                    onChange={(event) => updateSshProjectDraft({ ignoresText: event.target.value })}
+                  />
+                  {sshProjectPreflight ? (
+                    <div className="rounded-md border border-border/70 bg-secondary/60 px-2 py-1.5 text-[11px] text-muted-foreground">
+                      <div className="font-medium text-foreground/80">
+                        Mirror path: {sshProjectPreflight.resolvedLocalPath}
+                      </div>
+                      <div>
+                        SSH {sshProjectPreflight.sshReachable ? "ready" : "blocked"} · remote path{" "}
+                        {sshProjectPreflight.remotePathExists ? "ready" : "blocked"} · mutagen{" "}
+                        {sshProjectPreflight.mutagenInstalled ? "ready" : "blocked"}
+                      </div>
+                    </div>
+                  ) : null}
+                  <div className="flex gap-1.5">
+                    <button
+                      type="button"
+                      className="shrink-0 rounded-md border border-border bg-secondary px-2.5 py-1 text-xs font-medium text-foreground/80 transition-colors duration-150 hover:bg-accent hover:text-foreground disabled:opacity-60"
+                      onClick={() => void runSshProjectPreflight()}
+                      disabled={isCheckingSshProject || isAddingProject}
+                    >
+                      {isCheckingSshProject ? "Checking..." : "Check SSH"}
+                    </button>
+                    <button
+                      type="button"
+                      className="min-w-0 flex-1 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
+                      onClick={handleAddProject}
+                      disabled={isAddingProject || isCheckingSshProject}
+                    >
+                      {isAddingProject ? "Adding..." : "Add SSH Project"}
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <div className="flex gap-1.5">
+                  <input
+                    ref={addProjectInputRef}
+                    className={`min-w-0 flex-1 rounded-md border bg-secondary px-2 py-1 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:outline-none ${
+                      addProjectError
+                        ? "border-red-500/70 focus:border-red-500"
+                        : "border-border focus:border-ring"
+                    }`}
+                    placeholder={
+                      activeWorkspace.isLocal ? "/path/to/project" : "/remote/path/to/project"
+                    }
+                    value={newCwd}
+                    onChange={(event) => {
+                      setNewCwd(event.target.value);
+                      setAddProjectError(null);
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") handleAddProject();
+                      if (event.key === "Escape") {
+                        resetAddProjectState(false);
+                      }
+                    }}
+                    autoFocus
+                  />
+                  <button
+                    type="button"
+                    className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground transition-colors duration-150 hover:bg-primary/90 disabled:opacity-60"
+                    onClick={handleAddProject}
+                    disabled={isAddingProject}
+                  >
+                    {isAddingProject ? "Adding..." : "Add"}
+                  </button>
+                </div>
+              )}
               {addProjectError && (
                 <p className="mt-1 px-0.5 text-[11px] leading-tight text-red-400">
                   {addProjectError}
@@ -1767,10 +1976,7 @@ export default function Sidebar() {
                 <button
                   type="button"
                   className="text-[11px] text-muted-foreground/50 transition-colors hover:text-muted-foreground"
-                  onClick={() => {
-                    setAddingProject(false);
-                    setAddProjectError(null);
-                  }}
+                  onClick={() => resetAddProjectState(false)}
                 >
                   Cancel
                 </button>
@@ -1778,39 +1984,331 @@ export default function Sidebar() {
             </div>
           )}
 
-          {isManualProjectSorting ? (
-            <DndContext
-              sensors={projectDnDSensors}
-              collisionDetection={projectCollisionDetection}
-              modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
-              onDragStart={handleProjectDragStart}
-              onDragEnd={handleProjectDragEnd}
-              onDragCancel={handleProjectDragCancel}
-            >
-              <SidebarMenu>
-                <SortableContext
-                  items={sortedProjects.map((project) => project.id)}
-                  strategy={verticalListSortingStrategy}
-                >
-                  {sortedProjects.map((project) => (
-                    <SortableProjectItem key={project.id} projectId={project.id}>
-                      {(dragHandleProps) => renderProjectItem(project, dragHandleProps)}
-                    </SortableProjectItem>
-                  ))}
-                </SortableContext>
-              </SidebarMenu>
-            </DndContext>
-          ) : (
-            <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-              {sortedProjects.map((project) => (
-                <SidebarMenuItem key={project.id} className="rounded-md">
-                  {renderProjectItem(project, null)}
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
+          {!activeWorkspace.isLocal && remoteDirectoryBrowser && (
+            <RemoteDirectoryBrowserDialog
+              open
+              title="Browse Remote Workspace"
+              description={
+                remoteDirectoryBrowser.kind === "ssh"
+                  ? "Select a directory on the SSH target and use it as the remote project path."
+                  : `Select a directory on ${activeWorkspace.name} and use it as the project root.`
+              }
+              listing={remoteDirectoryBrowser.listing}
+              isLoading={isPickingFolder}
+              isSubmitting={isAddingProject}
+              onClose={() => {
+                setRemoteDirectoryBrowser(null);
+                addProjectInputRef.current?.focus();
+              }}
+              onNavigate={(path) => {
+                if (remoteDirectoryBrowser.kind === "ssh") {
+                  void loadSshDirectory(path);
+                  return;
+                }
+                void loadRemoteDirectory(path);
+              }}
+              onPathSubmit={(path) =>
+                remoteDirectoryBrowser.kind === "ssh"
+                  ? loadSshDirectory(path)
+                  : loadRemoteDirectory(path)
+              }
+              onCreateDirectory={(name) =>
+                remoteDirectoryBrowser.kind === "ssh"
+                  ? createSshDirectory(name)
+                  : createRemoteDirectory(name)
+              }
+              onUse={() => {
+                if (remoteDirectoryBrowser.kind === "ssh") {
+                  updateSshProjectDraft({
+                    remotePath: remoteDirectoryBrowser.listing.directoryPath,
+                  });
+                } else {
+                  setNewCwd(remoteDirectoryBrowser.listing.directoryPath);
+                }
+                setRemoteDirectoryBrowser(null);
+                addProjectInputRef.current?.focus();
+              }}
+              onSubmit={() =>
+                remoteDirectoryBrowser.kind === "ssh"
+                  ? void addProjectFromSshTarget()
+                  : void addProjectFromPath(remoteDirectoryBrowser.listing.directoryPath)
+              }
+              submitLabel={
+                remoteDirectoryBrowser.kind === "ssh" ? "Add SSH Project" : "Add Project"
+              }
+            />
           )}
 
-          {projects.length === 0 && !shouldShowProjectPathEntry && (
+          <SidebarMenu>
+            {projects.map((project) => {
+              const projectThreads = threads
+                .filter((thread) => thread.projectId === project.id)
+                .toSorted((a, b) => {
+                  const byDate = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+                  if (byDate !== 0) return byDate;
+                  return b.id.localeCompare(a.id);
+                });
+              const isThreadListExpanded = expandedThreadListsByProject.has(project.id);
+              const hasHiddenThreads = projectThreads.length > THREAD_PREVIEW_LIMIT;
+              const visibleThreads =
+                hasHiddenThreads && !isThreadListExpanded
+                  ? projectThreads.slice(0, THREAD_PREVIEW_LIMIT)
+                  : projectThreads;
+
+              return (
+                <Collapsible
+                  key={project.id}
+                  className="group/collapsible"
+                  open={project.expanded}
+                  onOpenChange={(open) => {
+                    if (open === project.expanded) return;
+                    toggleProject(project.id);
+                  }}
+                >
+                  <SidebarMenuItem>
+                    <div className="group/project-header relative">
+                      <CollapsibleTrigger
+                        render={
+                          <SidebarMenuButton
+                            size="sm"
+                            className="gap-2 px-2 py-1.5 text-left hover:bg-accent group-hover/project-header:bg-accent group-hover/project-header:text-sidebar-accent-foreground"
+                          />
+                        }
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          void handleProjectContextMenu(project.id, {
+                            x: event.clientX,
+                            y: event.clientY,
+                          });
+                        }}
+                      >
+                        <ChevronRightIcon
+                          className={`-ml-0.5 size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ${
+                            project.expanded ? "rotate-90" : ""
+                          }`}
+                        />
+                        <ProjectFavicon
+                          cwd={resolveProjectExecutionRoot(project)}
+                          workspace={activeWorkspace}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <div className="truncate text-xs font-medium text-foreground/90">
+                            {project.name}
+                          </div>
+                          <div className="truncate text-[10px] text-muted-foreground/80">
+                            {projectExecutionTargetLabel(project.executionTarget)}
+                          </div>
+                        </div>
+                      </CollapsibleTrigger>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <SidebarMenuAction
+                              render={
+                                <button
+                                  type="button"
+                                  aria-label={`Create new thread in ${project.name}`}
+                                />
+                              }
+                              showOnHover
+                              className="top-1 right-1 size-5 rounded-md p-0 text-muted-foreground/70 hover:bg-secondary hover:text-foreground"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                event.stopPropagation();
+                                void handleNewThread(project.id);
+                              }}
+                            >
+                              <SquarePenIcon className="size-3.5" />
+                            </SidebarMenuAction>
+                          }
+                        />
+                        <TooltipPopup side="top">
+                          {newThreadShortcutLabel
+                            ? `New thread (${newThreadShortcutLabel})`
+                            : "New thread"}
+                        </TooltipPopup>
+                      </Tooltip>
+                    </div>
+
+                    <CollapsibleContent>
+                      <SidebarMenuSub className="mx-1 my-0 w-full translate-x-0 gap-0 px-1.5 py-0">
+                        {visibleThreads.map((thread) => {
+                          const isActive = routeThreadId === thread.id;
+                          const threadStatus = threadStatusPill(
+                            thread,
+                            pendingApprovalByThreadId.get(thread.id) === true,
+                          );
+                          const prStatus = prStatusIndicator(prByThreadId.get(thread.id) ?? null);
+                          const terminalStatus = terminalStatusFromRunningIds(
+                            selectThreadTerminalState(terminalStateByThreadId, thread.id)
+                              .runningTerminalIds,
+                          );
+
+                          return (
+                            <SidebarMenuSubItem key={thread.id} className="w-full">
+                              <SidebarMenuSubButton
+                                render={<div role="button" tabIndex={0} />}
+                                size="sm"
+                                isActive={isActive}
+                                className={`h-7 w-full translate-x-0 cursor-default justify-start px-2 text-left hover:bg-accent hover:text-foreground ${
+                                  isActive
+                                    ? "bg-accent/85 text-foreground font-medium ring-1 ring-border/70 dark:bg-accent/55 dark:ring-border/50"
+                                    : "text-muted-foreground"
+                                }`}
+                                onClick={() => {
+                                  void navigate({
+                                    to: "/$threadId",
+                                    params: { threadId: thread.id },
+                                  });
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key !== "Enter" && event.key !== " ") return;
+                                  event.preventDefault();
+                                  void navigate({
+                                    to: "/$threadId",
+                                    params: { threadId: thread.id },
+                                  });
+                                }}
+                                onContextMenu={(event) => {
+                                  event.preventDefault();
+                                  void handleThreadContextMenu(thread.id, {
+                                    x: event.clientX,
+                                    y: event.clientY,
+                                  });
+                                }}
+                              >
+                                <div className="flex min-w-0 flex-1 items-center gap-1.5 text-left">
+                                  {prStatus && (
+                                    <Tooltip>
+                                      <TooltipTrigger
+                                        render={
+                                          <button
+                                            type="button"
+                                            aria-label={prStatus.tooltip}
+                                            className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
+                                            onClick={(event) => {
+                                              openPrLink(event, prStatus.url);
+                                            }}
+                                          >
+                                            <GitPullRequestIcon className="size-3" />
+                                          </button>
+                                        }
+                                      />
+                                      <TooltipPopup side="top">{prStatus.tooltip}</TooltipPopup>
+                                    </Tooltip>
+                                  )}
+                                  {threadStatus && (
+                                    <span
+                                      className={`inline-flex items-center gap-1 text-[10px] ${threadStatus.colorClass}`}
+                                    >
+                                      <span
+                                        className={`h-1.5 w-1.5 rounded-full ${threadStatus.dotClass} ${
+                                          threadStatus.pulse ? "animate-pulse" : ""
+                                        }`}
+                                      />
+                                      <span className="hidden md:inline">{threadStatus.label}</span>
+                                    </span>
+                                  )}
+                                  {renamingThreadId === thread.id ? (
+                                    <input
+                                      ref={(el) => {
+                                        if (el && renamingInputRef.current !== el) {
+                                          renamingInputRef.current = el;
+                                          el.focus();
+                                          el.select();
+                                        }
+                                      }}
+                                      className="min-w-0 flex-1 truncate text-xs bg-transparent outline-none border border-ring rounded px-0.5"
+                                      value={renamingTitle}
+                                      onChange={(e) => setRenamingTitle(e.target.value)}
+                                      onKeyDown={(e) => {
+                                        e.stopPropagation();
+                                        if (e.key === "Enter") {
+                                          e.preventDefault();
+                                          renamingCommittedRef.current = true;
+                                          void commitRename(thread.id, renamingTitle, thread.title);
+                                        } else if (e.key === "Escape") {
+                                          e.preventDefault();
+                                          renamingCommittedRef.current = true;
+                                          cancelRename();
+                                        }
+                                      }}
+                                      onBlur={() => {
+                                        if (!renamingCommittedRef.current) {
+                                          void commitRename(thread.id, renamingTitle, thread.title);
+                                        }
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                    />
+                                  ) : (
+                                    <span className="min-w-0 flex-1 truncate text-xs">
+                                      {thread.title}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="ml-auto flex shrink-0 items-center gap-1.5">
+                                  {terminalStatus && (
+                                    <span
+                                      role="img"
+                                      aria-label={terminalStatus.label}
+                                      title={terminalStatus.label}
+                                      className={`inline-flex items-center justify-center ${terminalStatus.colorClass}`}
+                                    >
+                                      <TerminalIcon
+                                        className={`size-3 ${terminalStatus.pulse ? "animate-pulse" : ""}`}
+                                      />
+                                    </span>
+                                  )}
+                                  <span
+                                    className={`text-[10px] ${
+                                      isActive ? "text-foreground/65" : "text-muted-foreground/40"
+                                    }`}
+                                  >
+                                    {formatRelativeTime(thread.createdAt)}
+                                  </span>
+                                </div>
+                              </SidebarMenuSubButton>
+                            </SidebarMenuSubItem>
+                          );
+                        })}
+
+                        {hasHiddenThreads && !isThreadListExpanded && (
+                          <SidebarMenuSubItem className="w-full">
+                            <SidebarMenuSubButton
+                              render={<button type="button" />}
+                              size="sm"
+                              className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                              onClick={() => {
+                                expandThreadListForProject(project.id);
+                              }}
+                            >
+                              <span>Show more</span>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        )}
+                        {hasHiddenThreads && isThreadListExpanded && (
+                          <SidebarMenuSubItem className="w-full">
+                            <SidebarMenuSubButton
+                              render={<button type="button" />}
+                              size="sm"
+                              className="h-6 w-full translate-x-0 justify-start px-2 text-left text-[10px] text-muted-foreground/60 hover:bg-accent hover:text-muted-foreground/80"
+                              onClick={() => {
+                                collapseThreadListForProject(project.id);
+                              }}
+                            >
+                              <span>Show less</span>
+                            </SidebarMenuSubButton>
+                          </SidebarMenuSubItem>
+                        )}
+                      </SidebarMenuSub>
+                    </CollapsibleContent>
+                  </SidebarMenuItem>
+                </Collapsible>
+              );
+            })}
+          </SidebarMenu>
+
+          {projects.length === 0 && !addingProject && (
             <div className="px-2 pt-4 text-center text-xs text-muted-foreground/60">
               No projects yet
             </div>
@@ -1820,30 +2318,54 @@ export default function Sidebar() {
 
       <SidebarSeparator />
       <SidebarFooter className="p-2">
-        <SidebarMenu>
-          <SidebarMenuItem>
-            {isOnSettings ? (
-              <SidebarMenuButton
-                size="sm"
-                className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-                onClick={() => window.history.back()}
-              >
-                <ArrowLeftIcon className="size-3.5" />
-                <span className="text-xs">Back</span>
-              </SidebarMenuButton>
-            ) : (
-              <SidebarMenuButton
-                size="sm"
-                className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
-                onClick={() => void navigate({ to: "/settings" })}
-              >
-                <SettingsIcon className="size-3.5" />
-                <span className="text-xs">Settings</span>
-              </SidebarMenuButton>
-            )}
-          </SidebarMenuItem>
-        </SidebarMenu>
+        {isElectron ? (
+          isOnSettings ? (
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  size="sm"
+                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                  onClick={() => window.history.back()}
+                >
+                  <ArrowLeftIcon className="size-3.5" />
+                  <span className="text-xs">Back</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          ) : (
+            <WorkspacePager
+              activeWorkspaceId={activeWorkspace.id}
+              workspaceIdsAndNames={workspaceOptions}
+              onChange={(workspaceId) => updateSettings({ activeWorkspaceId: workspaceId })}
+              onOpenWorkspaceSettings={() => void navigate({ to: "/settings" })}
+            />
+          )
+        ) : (
+          <SidebarMenu>
+            <SidebarMenuItem>
+              {isOnSettings ? (
+                <SidebarMenuButton
+                  size="sm"
+                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                  onClick={() => window.history.back()}
+                >
+                  <ArrowLeftIcon className="size-3.5" />
+                  <span className="text-xs">Back</span>
+                </SidebarMenuButton>
+              ) : (
+                <SidebarMenuButton
+                  size="sm"
+                  className="gap-2 px-2 py-1.5 text-muted-foreground/70 hover:bg-accent hover:text-foreground"
+                  onClick={() => void navigate({ to: "/settings" })}
+                >
+                  <SettingsIcon className="size-3.5" />
+                  <span className="text-xs">Settings</span>
+                </SidebarMenuButton>
+              )}
+            </SidebarMenuItem>
+          </SidebarMenu>
+        )}
       </SidebarFooter>
-    </>
+    </div>
   );
 }

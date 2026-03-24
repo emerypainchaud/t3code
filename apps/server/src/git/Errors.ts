@@ -16,15 +16,18 @@ export class GitCommandError extends Schema.TaggedErrorClass<GitCommandError>()(
 }
 
 /**
- * GitHubCliError - GitHub CLI execution or authentication failed.
+ * GitForgeCliError - GitHub/GitLab CLI execution or authentication failed.
  */
-export class GitHubCliError extends Schema.TaggedErrorClass<GitHubCliError>()("GitHubCliError", {
-  operation: Schema.String,
-  detail: Schema.String,
-  cause: Schema.optional(Schema.Defect),
-}) {
+export class GitForgeCliError extends Schema.TaggedErrorClass<GitForgeCliError>()(
+  "GitForgeCliError",
+  {
+    operation: Schema.String,
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect),
+  },
+) {
   override get message(): string {
-    return `GitHub CLI failed in ${this.operation}: ${this.detail}`;
+    return `Git forge CLI failed in ${this.operation}: ${this.detail}`;
   }
 }
 
@@ -63,5 +66,5 @@ export class GitManagerError extends Schema.TaggedErrorClass<GitManagerError>()(
 export type GitManagerServiceError =
   | GitManagerError
   | GitCommandError
-  | GitHubCliError
+  | GitForgeCliError
   | TextGenerationError;

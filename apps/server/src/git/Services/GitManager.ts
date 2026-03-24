@@ -1,7 +1,7 @@
 /**
  * GitManager - Effect service contract for stacked Git workflows.
  *
- * Orchestrates status inspection and commit/push/PR flows by composing
+ * Orchestrates status inspection and commit/push/review-request flows by composing
  * lower-level Git and external tool services.
  *
  * @module GitManager
@@ -35,7 +35,7 @@ export interface GitRunStackedActionOptions {
  */
 export interface GitManagerShape {
   /**
-   * Read current repository Git status plus open PR metadata when available.
+   * Read current repository Git status plus review-request metadata when available.
    */
   readonly status: (
     input: GitStatusInput,

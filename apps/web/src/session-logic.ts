@@ -19,6 +19,11 @@ import type {
   ThreadSession,
   TurnDiffSummary,
 } from "./types";
+import { formatTimestamp as formatTimestampWithPreference } from "./timestampFormat";
+
+export function formatTimestamp(isoDate: string): string {
+  return formatTimestampWithPreference(isoDate, "locale");
+}
 
 export type ProviderPickerKind = ProviderKind | "cursor";
 
@@ -28,7 +33,7 @@ export const PROVIDER_OPTIONS: Array<{
   available: boolean;
 }> = [
   { value: "codex", label: "Codex", available: true },
-  { value: "claudeAgent", label: "Claude", available: true },
+  { value: "claudeCode", label: "Claude", available: true },
   { value: "cursor", label: "Cursor", available: false },
 ];
 

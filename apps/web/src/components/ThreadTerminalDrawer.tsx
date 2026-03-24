@@ -1,6 +1,6 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Plus, SquareSplitHorizontal, TerminalSquare, Trash2, XIcon } from "lucide-react";
-import { type ThreadId } from "@t3tools/contracts";
+import { type ProjectExecutionTarget, type ProjectId, type ThreadId } from "@t3tools/contracts";
 import { Terminal, type ITheme } from "@xterm/xterm";
 import {
   type PointerEvent as ReactPointerEvent,
@@ -27,6 +27,8 @@ import {
   type ThreadTerminalGroup,
 } from "../types";
 import { readNativeApi } from "~/nativeApi";
+import type { AppWorkspace } from "~/appSettings";
+import { resolveExternalUrlWithContext } from "~/externalUrl";
 
 const MIN_DRAWER_HEIGHT = 180;
 const MAX_DRAWER_HEIGHT_RATIO = 0.75;
@@ -182,9 +184,12 @@ export function shouldHandleTerminalSelectionMouseUp(
 
 interface TerminalViewportProps {
   threadId: ThreadId;
+  projectId: ProjectId;
   terminalId: string;
   terminalLabel: string;
   cwd: string;
+  workspace: AppWorkspace;
+  executionTarget?: ProjectExecutionTarget | null | undefined;
   runtimeEnv?: Record<string, string>;
   onSessionExited: () => void;
   onAddTerminalContext: (selection: TerminalContextSelection) => void;
@@ -196,9 +201,12 @@ interface TerminalViewportProps {
 
 function TerminalViewport({
   threadId,
+  projectId,
   terminalId,
   terminalLabel,
   cwd,
+  workspace,
+  executionTarget,
   runtimeEnv,
   onSessionExited,
   onAddTerminalContext,
@@ -393,7 +401,11 @@ function TerminalViewport({
               if (!latestTerminal) return;
 
               if (match.kind === "url") {
-                void api.shell.openExternal(match.text).catch((error) => {
+                const targetUrl = resolveExternalUrlWithContext(match.text, {
+                  workspace,
+                  executionTarget,
+                });
+                void api.shell.openExternal(targetUrl).catch((error) => {
                   writeSystemMessage(
                     latestTerminal,
                     error instanceof Error ? error.message : "Unable to open link",
@@ -403,7 +415,11 @@ function TerminalViewport({
               }
 
               const target = resolvePathLinkTarget(match.text, cwd);
-              void openInPreferredEditor(api, target).catch((error) => {
+              void openInPreferredEditor(api, target, {
+                workspace,
+                executionTarget,
+                targetKind: "file",
+              }).catch((error) => {
                 writeSystemMessage(
                   latestTerminal,
                   error instanceof Error ? error.message : "Unable to open path",
@@ -477,6 +493,7 @@ function TerminalViewport({
         activeFitAddon.fit();
         const snapshot = await api.terminal.open({
           threadId,
+          projectId,
           terminalId,
           cwd,
           cols: activeTerminal.cols,
@@ -600,7 +617,7 @@ function TerminalViewport({
     // autoFocus is intentionally omitted;
     // it is only read at mount time and must not trigger terminal teardown/recreation.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cwd, runtimeEnv, terminalId, threadId]);
+  }, [cwd, executionTarget, projectId, runtimeEnv, terminalId, threadId, workspace]);
 
   useEffect(() => {
     if (!autoFocus) return;
@@ -645,7 +662,10 @@ function TerminalViewport({
 
 interface ThreadTerminalDrawerProps {
   threadId: ThreadId;
+  projectId: ProjectId;
   cwd: string;
+  workspace: AppWorkspace;
+  executionTarget?: ProjectExecutionTarget | null | undefined;
   runtimeEnv?: Record<string, string>;
   height: number;
   terminalIds: string[];
@@ -695,7 +715,10 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
 
 export default function ThreadTerminalDrawer({
   threadId,
+  projectId,
   cwd,
+  workspace,
+  executionTarget,
   runtimeEnv,
   height,
   terminalIds,
@@ -1007,9 +1030,12 @@ export default function ThreadTerminalDrawer({
                     <div className="h-full p-1">
                       <TerminalViewport
                         threadId={threadId}
+                        projectId={projectId}
                         terminalId={terminalId}
                         terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
                         cwd={cwd}
+                        workspace={workspace}
+                        executionTarget={executionTarget}
                         {...(runtimeEnv ? { runtimeEnv } : {})}
                         onSessionExited={() => onCloseTerminal(terminalId)}
                         onAddTerminalContext={onAddTerminalContext}
@@ -1027,9 +1053,12 @@ export default function ThreadTerminalDrawer({
                 <TerminalViewport
                   key={resolvedActiveTerminalId}
                   threadId={threadId}
+                  projectId={projectId}
                   terminalId={resolvedActiveTerminalId}
                   terminalLabel={terminalLabelById.get(resolvedActiveTerminalId) ?? "Terminal"}
                   cwd={cwd}
+                  workspace={workspace}
+                  executionTarget={executionTarget}
                   {...(runtimeEnv ? { runtimeEnv } : {})}
                   onSessionExited={() => onCloseTerminal(resolvedActiveTerminalId)}
                   onAddTerminalContext={onAddTerminalContext}

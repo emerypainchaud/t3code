@@ -441,7 +441,7 @@ describe("ProviderRuntimeIngestion", () => {
         session: {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "ready",
-          providerName: "claudeAgent",
+          providerName: "claudeCode",
           runtimeMode: "approval-required",
           activeTurnId: null,
           updatedAt: seededAt,
@@ -454,7 +454,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-started-claude-placeholder"),
-      provider: "claudeAgent",
+      provider: "claudeCode",
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-claude-placeholder"),
@@ -470,7 +470,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-completed-claude-placeholder"),
-      provider: "claudeAgent",
+      provider: "claudeCode",
       createdAt: new Date().toISOString(),
       threadId: asThreadId("thread-1"),
       turnId: asTurnId("turn-claude-placeholder"),

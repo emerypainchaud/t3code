@@ -55,9 +55,9 @@ describe("normalizeModelSlug", () => {
   });
 
   it("uses provider-specific aliases", () => {
-    expect(normalizeModelSlug("sonnet", "claudeAgent")).toBe("claude-sonnet-4-6");
-    expect(normalizeModelSlug("opus-4.6", "claudeAgent")).toBe("claude-opus-4-6");
-    expect(normalizeModelSlug("claude-haiku-4-5-20251001", "claudeAgent")).toBe("claude-haiku-4-5");
+    expect(normalizeModelSlug("sonnet", "claudeCode")).toBe("claude-sonnet-4-6");
+    expect(normalizeModelSlug("opus-4.6", "claudeCode")).toBe("claude-opus-4-6");
+    expect(normalizeModelSlug("claude-haiku-4-5-20251001", "claudeCode")).toBe("claude-haiku-4-5");
   });
 });
 
@@ -79,19 +79,19 @@ describe("resolveModelSlug", () => {
   });
 
   it("supports provider-aware resolution", () => {
-    expect(resolveModelSlugForProvider("claudeAgent", undefined)).toBe(
-      DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
+    expect(resolveModelSlugForProvider("claudeCode", undefined)).toBe(
+      DEFAULT_MODEL_BY_PROVIDER.claudeCode,
     );
-    expect(resolveModelSlugForProvider("claudeAgent", "sonnet")).toBe("claude-sonnet-4-6");
-    expect(resolveModelSlugForProvider("claudeAgent", "gpt-5.3-codex")).toBe(
-      DEFAULT_MODEL_BY_PROVIDER.claudeAgent,
+    expect(resolveModelSlugForProvider("claudeCode", "sonnet")).toBe("claude-sonnet-4-6");
+    expect(resolveModelSlugForProvider("claudeCode", "gpt-5.3-codex")).toBe(
+      DEFAULT_MODEL_BY_PROVIDER.claudeCode,
     );
   });
 
   it("keeps codex defaults for backward compatibility", () => {
     expect(getDefaultModel()).toBe(DEFAULT_MODEL);
     expect(getModelOptions()).toEqual(MODEL_OPTIONS);
-    expect(getModelOptions("claudeAgent")).toEqual(MODEL_OPTIONS_BY_PROVIDER.claudeAgent);
+    expect(getModelOptions("claudeCode")).toEqual(MODEL_OPTIONS_BY_PROVIDER.claudeCode);
   });
 });
 
@@ -165,7 +165,7 @@ describe("getReasoningEffortOptions", () => {
   });
 
   it("returns claude effort options for Opus 4.6", () => {
-    expect(getReasoningEffortOptions("claudeAgent", "claude-opus-4-6")).toEqual([
+    expect(getReasoningEffortOptions("claudeCode", "claude-opus-4-6")).toEqual([
       "low",
       "medium",
       "high",
@@ -175,7 +175,7 @@ describe("getReasoningEffortOptions", () => {
   });
 
   it("returns claude effort options for Sonnet 4.6", () => {
-    expect(getReasoningEffortOptions("claudeAgent", "claude-sonnet-4-6")).toEqual([
+    expect(getReasoningEffortOptions("claudeCode", "claude-sonnet-4-6")).toEqual([
       "low",
       "medium",
       "high",
@@ -184,32 +184,32 @@ describe("getReasoningEffortOptions", () => {
   });
 
   it("returns no claude effort options for Haiku 4.5", () => {
-    expect(getReasoningEffortOptions("claudeAgent", "claude-haiku-4-5")).toEqual([]);
+    expect(getReasoningEffortOptions("claudeCode", "claude-haiku-4-5")).toEqual([]);
   });
 });
 
 describe("inferProviderForModel", () => {
   it("detects known provider model slugs", () => {
     expect(inferProviderForModel("gpt-5.3-codex")).toBe("codex");
-    expect(inferProviderForModel("claude-sonnet-4-6")).toBe("claudeAgent");
-    expect(inferProviderForModel("sonnet")).toBe("claudeAgent");
+    expect(inferProviderForModel("claude-sonnet-4-6")).toBe("claudeCode");
+    expect(inferProviderForModel("sonnet")).toBe("claudeCode");
   });
 
   it("falls back when the model is unknown", () => {
     expect(inferProviderForModel("custom/internal-model")).toBe("codex");
-    expect(inferProviderForModel("custom/internal-model", "claudeAgent")).toBe("claudeAgent");
+    expect(inferProviderForModel("custom/internal-model", "claudeCode")).toBe("claudeCode");
   });
 
   it("treats claude-prefixed custom slugs as claude", () => {
-    expect(inferProviderForModel("claude-custom-internal")).toBe("claudeAgent");
+    expect(inferProviderForModel("claude-custom-internal")).toBe("claudeCode");
   });
 });
 
 describe("getDefaultReasoningEffort", () => {
   it("returns provider-scoped defaults", () => {
     expect(getDefaultReasoningEffort("codex")).toBe(DEFAULT_REASONING_EFFORT_BY_PROVIDER.codex);
-    expect(getDefaultReasoningEffort("claudeAgent")).toBe(
-      DEFAULT_REASONING_EFFORT_BY_PROVIDER.claudeAgent,
+    expect(getDefaultReasoningEffort("claudeCode")).toBe(
+      DEFAULT_REASONING_EFFORT_BY_PROVIDER.claudeCode,
     );
   });
 });
@@ -217,12 +217,12 @@ describe("getDefaultReasoningEffort", () => {
 describe("resolveReasoningEffortForProvider", () => {
   it("accepts provider-scoped effort values", () => {
     expect(resolveReasoningEffortForProvider("codex", "xhigh")).toBe("xhigh");
-    expect(resolveReasoningEffortForProvider("claudeAgent", "ultrathink")).toBe("ultrathink");
+    expect(resolveReasoningEffortForProvider("claudeCode", "ultrathink")).toBe("ultrathink");
   });
 
   it("rejects effort values from the wrong provider", () => {
     expect(resolveReasoningEffortForProvider("codex", "max")).toBeNull();
-    expect(resolveReasoningEffortForProvider("claudeAgent", "xhigh")).toBeNull();
+    expect(resolveReasoningEffortForProvider("claudeCode", "xhigh")).toBeNull();
   });
 });
 

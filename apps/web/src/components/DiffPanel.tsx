@@ -28,6 +28,7 @@ import { parseDiffRouteSearch, stripDiffSearchParams } from "../diffRouteSearch"
 import { useTheme } from "../hooks/useTheme";
 import { buildPatchCacheKey } from "../lib/diffRendering";
 import { resolveDiffThemeName } from "../lib/diffRendering";
+import { resolveExecutionCwd } from "../projectExecutionPath";
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useStore } from "../store";
 import { useAppSettings } from "../appSettings";
@@ -166,7 +167,7 @@ export { DiffWorkerPoolProvider } from "./DiffWorkerPoolProvider";
 export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const navigate = useNavigate();
   const { resolvedTheme } = useTheme();
-  const { settings } = useAppSettings();
+  const { settings, activeWorkspace } = useAppSettings();
   const [diffRenderMode, setDiffRenderMode] = useState<DiffRenderMode>("stacked");
   const [diffWordWrap, setDiffWordWrap] = useState(settings.diffWordWrap);
   const patchViewportRef = useRef<HTMLDivElement>(null);
@@ -188,7 +189,10 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
   const activeProject = useStore((store) =>
     activeProjectId ? store.projects.find((project) => project.id === activeProjectId) : undefined,
   );
-  const activeCwd = activeThread?.worktreePath ?? activeProject?.cwd;
+  const activeCwd = resolveExecutionCwd({
+    project: activeProject,
+    worktreePath: activeThread?.worktreePath ?? null,
+  });
   const gitBranchesQuery = useQuery(gitBranchesQueryOptions(activeCwd ?? null));
   const isGitRepo = gitBranchesQuery.data?.isRepo ?? true;
   const { turnDiffSummaries, inferredCheckpointTurnCountByTurnId } =
@@ -324,11 +328,15 @@ export default function DiffPanel({ mode = "inline" }: DiffPanelProps) {
       const api = readNativeApi();
       if (!api) return;
       const targetPath = activeCwd ? resolvePathLinkTarget(filePath, activeCwd) : filePath;
-      void openInPreferredEditor(api, targetPath).catch((error) => {
+      void openInPreferredEditor(api, targetPath, {
+        workspace: activeWorkspace,
+        executionTarget: activeThread?.executionTarget ?? null,
+        targetKind: "file",
+      }).catch((error) => {
         console.warn("Failed to open diff file in editor.", error);
       });
     },
-    [activeCwd],
+    [activeCwd, activeThread?.executionTarget, activeWorkspace],
   );
 
   const selectTurn = (turnId: TurnId) => {

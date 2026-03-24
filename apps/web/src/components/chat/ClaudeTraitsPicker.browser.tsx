@@ -25,10 +25,10 @@ async function mountPicker(props?: {
     nonPersistedImageIds: [],
     persistedAttachments: [],
     terminalContexts: [],
-    provider: "claudeAgent",
+    provider: "claudeCode",
     model: props?.model ?? "claude-opus-4-6",
     modelOptions: {
-      claudeAgent: {
+      claudeCode: {
         ...(props?.effort ? { effort: props.effort } : {}),
         ...(props?.thinkingEnabled === false ? { thinking: false } : {}),
         ...(props?.fastModeEnabled ? { fastMode: true } : {}),

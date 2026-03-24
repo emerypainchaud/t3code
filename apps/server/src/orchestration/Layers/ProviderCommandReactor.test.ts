@@ -110,7 +110,7 @@ describe("ProviderCommandReactor", () => {
         typeof input === "object" &&
         input !== null &&
         "provider" in input &&
-        (input.provider === "codex" || input.provider === "claudeAgent")
+        (input.provider === "codex" || input.provider === "claudeCode")
           ? input.provider
           : "codex";
       const resumeCursor =
@@ -380,10 +380,10 @@ describe("ProviderCommandReactor", () => {
           text: "hello with effort",
           attachments: [],
         },
-        provider: "claudeAgent",
+        provider: "claudeCode",
         model: "claude-sonnet-4-6",
         modelOptions: {
-          claudeAgent: {
+          claudeCode: {
             effort: "max",
           },
         },
@@ -396,10 +396,10 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       model: "claude-sonnet-4-6",
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           effort: "max",
         },
       },
@@ -408,7 +408,7 @@ describe("ProviderCommandReactor", () => {
       threadId: ThreadId.makeUnsafe("thread-1"),
       model: "claude-sonnet-4-6",
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           effort: "max",
         },
       },
@@ -430,10 +430,10 @@ describe("ProviderCommandReactor", () => {
           text: "hello with fast mode",
           attachments: [],
         },
-        provider: "claudeAgent",
+        provider: "claudeCode",
         model: "claude-opus-4-6",
         modelOptions: {
-          claudeAgent: {
+          claudeCode: {
             fastMode: true,
           },
         },
@@ -446,10 +446,10 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.startSession.mock.calls.length === 1);
     await waitFor(() => harness.sendTurn.mock.calls.length === 1);
     expect(harness.startSession.mock.calls[0]?.[1]).toMatchObject({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       model: "claude-opus-4-6",
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           fastMode: true,
         },
       },
@@ -458,7 +458,7 @@ describe("ProviderCommandReactor", () => {
       threadId: ThreadId.makeUnsafe("thread-1"),
       model: "claude-opus-4-6",
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           fastMode: true,
         },
       },
@@ -518,7 +518,7 @@ describe("ProviderCommandReactor", () => {
           text: "hello claude",
           attachments: [],
         },
-        provider: "claudeAgent",
+        provider: "claudeCode",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -547,7 +547,7 @@ describe("ProviderCommandReactor", () => {
     ).toMatchObject({
       summary: "Provider turn start failed",
       payload: {
-        detail: expect.stringContaining("cannot switch to 'claudeAgent'"),
+        detail: expect.stringContaining("cannot switch to 'claudeCode'"),
       },
     });
   });
@@ -660,10 +660,10 @@ describe("ProviderCommandReactor", () => {
           text: "first claude turn",
           attachments: [],
         },
-        provider: "claudeAgent",
+        provider: "claudeCode",
         model: "claude-sonnet-4-6",
         modelOptions: {
-          claudeAgent: {
+          claudeCode: {
             effort: "medium",
           },
         },
@@ -687,10 +687,10 @@ describe("ProviderCommandReactor", () => {
           text: "second claude turn",
           attachments: [],
         },
-        provider: "claudeAgent",
+        provider: "claudeCode",
         model: "claude-sonnet-4-6",
         modelOptions: {
-          claudeAgent: {
+          claudeCode: {
             effort: "max",
           },
         },
@@ -703,10 +703,10 @@ describe("ProviderCommandReactor", () => {
     await waitFor(() => harness.startSession.mock.calls.length === 2);
     await waitFor(() => harness.sendTurn.mock.calls.length === 2);
     expect(harness.startSession.mock.calls[1]?.[1]).toMatchObject({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       resumeCursor: { opaque: "resume-1" },
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           effort: "max",
         },
       },
@@ -835,7 +835,7 @@ describe("ProviderCommandReactor", () => {
           text: "second",
           attachments: [],
         },
-        provider: "claudeAgent",
+        provider: "claudeCode",
         interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
         runtimeMode: "approval-required",
         createdAt: now,
@@ -866,7 +866,7 @@ describe("ProviderCommandReactor", () => {
       thread?.activities.find((activity) => activity.kind === "provider.turn.start.failed"),
     ).toMatchObject({
       payload: {
-        detail: expect.stringContaining("cannot switch to 'claudeAgent'"),
+        detail: expect.stringContaining("cannot switch to 'claudeCode'"),
       },
     });
   });
@@ -1165,7 +1165,7 @@ describe("ProviderCommandReactor", () => {
     harness.respondToUserInput.mockImplementation(() =>
       Effect.fail(
         new ProviderAdapterRequestError({
-          provider: "claudeAgent",
+          provider: "claudeCode",
           method: "item/tool/respondToUserInput",
           detail: "Unknown pending user-input request: user-input-request-1",
         }),
@@ -1180,7 +1180,7 @@ describe("ProviderCommandReactor", () => {
         session: {
           threadId: ThreadId.makeUnsafe("thread-1"),
           status: "running",
-          providerName: "claudeAgent",
+          providerName: "claudeCode",
           runtimeMode: "approval-required",
           activeTurnId: null,
           lastError: null,

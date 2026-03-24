@@ -1,3 +1,4 @@
+import type { ProjectExecutionTarget } from "@t3tools/contracts";
 import { DiffsHighlighter, getSharedHighlighter, SupportedLanguages } from "@pierre/diffs";
 import { CheckIcon, CopyIcon } from "lucide-react";
 import React, {
@@ -17,12 +18,15 @@ import type { Components } from "react-markdown";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { openInPreferredEditor } from "../editorPreferences";
+import type { AppWorkspace } from "../appSettings";
+import { useAppSettings } from "../appSettings";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
 import { useTheme } from "../hooks/useTheme";
 import { resolveMarkdownFileLinkTarget } from "../markdown-links";
 import { readNativeApi } from "../nativeApi";
+import { resolveExternalUrlWithContext } from "../externalUrl";
 
 class CodeHighlightErrorBoundary extends React.Component<
   { fallback: ReactNode; children: ReactNode },
@@ -49,6 +53,8 @@ interface ChatMarkdownProps {
   text: string;
   cwd: string | undefined;
   isStreaming?: boolean;
+  workspace?: AppWorkspace;
+  executionTarget?: ProjectExecutionTarget | null | undefined;
 }
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
@@ -235,15 +241,51 @@ function SuspenseShikiCodeBlock({
   );
 }
 
-function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
+function ChatMarkdown({
+  text,
+  cwd,
+  isStreaming = false,
+  workspace,
+  executionTarget,
+}: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
+  const { activeWorkspace } = useAppSettings();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
+  const effectiveWorkspace = workspace ?? activeWorkspace;
   const markdownComponents = useMemo<Components>(
     () => ({
       a({ node: _node, href, ...props }) {
         const targetPath = resolveMarkdownFileLinkTarget(href, cwd);
         if (!targetPath) {
-          return <a {...props} href={href} target="_blank" rel="noreferrer" />;
+          const resolvedHref =
+            href && href.length > 0
+              ? resolveExternalUrlWithContext(href, {
+                  workspace: effectiveWorkspace,
+                  executionTarget,
+                })
+              : href;
+          return (
+            <a
+              {...props}
+              href={resolvedHref}
+              target="_blank"
+              rel="noreferrer"
+              onClick={(event) => {
+                const api = readNativeApi();
+                if (!api || !resolvedHref) {
+                  return;
+                }
+                event.preventDefault();
+                event.stopPropagation();
+                void api.shell.openExternal(resolvedHref).catch((error) => {
+                  console.warn(
+                    "Unable to open markdown link",
+                    error instanceof Error ? error.message : error,
+                  );
+                });
+              }}
+            />
+          );
         }
 
         return (
@@ -255,7 +297,11 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
               event.stopPropagation();
               const api = readNativeApi();
               if (api) {
-                void openInPreferredEditor(api, targetPath);
+                void openInPreferredEditor(api, targetPath, {
+                  workspace: effectiveWorkspace,
+                  executionTarget,
+                  targetKind: "file",
+                });
               } else {
                 console.warn("Native API not found. Unable to open file in editor.");
               }
@@ -285,7 +331,7 @@ function ChatMarkdown({ text, cwd, isStreaming = false }: ChatMarkdownProps) {
         );
       },
     }),
-    [cwd, diffThemeName, isStreaming],
+    [cwd, diffThemeName, effectiveWorkspace, executionTarget, isStreaming],
   );
 
   return (

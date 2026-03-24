@@ -4,6 +4,7 @@ import { useCallback } from "react";
 
 import { newCommandId } from "../lib/utils";
 import { readNativeApi } from "../nativeApi";
+import { resolveExecutionCwd, resolveProjectExecutionRoot } from "../projectExecutionPath";
 import { useComposerDraftStore } from "../composerDraftStore";
 import { useStore } from "../store";
 import {
@@ -46,7 +47,11 @@ export default function BranchToolbar({
   const activeThreadId = serverThread?.id ?? (draftThread ? threadId : undefined);
   const activeThreadBranch = serverThread?.branch ?? draftThread?.branch ?? null;
   const activeWorktreePath = serverThread?.worktreePath ?? draftThread?.worktreePath ?? null;
-  const branchCwd = activeWorktreePath ?? activeProject?.cwd ?? null;
+  const activeProjectCwd = activeProject ? resolveProjectExecutionRoot(activeProject) : null;
+  const branchCwd = resolveExecutionCwd({
+    project: activeProject,
+    worktreePath: activeWorktreePath,
+  });
   const hasServerThread = serverThread !== undefined;
   const effectiveEnvMode = resolveEffectiveEnvMode({
     activeWorktreePath,
@@ -156,7 +161,7 @@ export default function BranchToolbar({
       )}
 
       <BranchToolbarBranchSelector
-        activeProjectCwd={activeProject.cwd}
+        activeProjectCwd={activeProjectCwd ?? activeProject.cwd}
         activeThreadBranch={activeThreadBranch}
         activeWorktreePath={activeWorktreePath}
         branchCwd={branchCwd}

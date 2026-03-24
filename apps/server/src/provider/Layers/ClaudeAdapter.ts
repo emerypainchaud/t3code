@@ -76,7 +76,7 @@ import {
 import { ClaudeAdapter, type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
-const PROVIDER = "claudeAgent" as const;
+const PROVIDER = "claudeCode" as const;
 type ClaudeTextStreamKind = Extract<RuntimeContentStreamKind, "assistant_text" | "reasoning_text">;
 type ClaudeToolResultStreamKind = Extract<
   RuntimeContentStreamKind,
@@ -513,10 +513,10 @@ const CLAUDE_SETTING_SOURCES = [
 
 function buildPromptText(input: ProviderSendTurnInput): string {
   const requestedEffort = resolveReasoningEffortForProvider(
-    "claudeAgent",
-    input.modelOptions?.claudeAgent?.effort ?? null,
+    "claudeCode",
+    input.modelOptions?.claudeCode?.effort ?? null,
   );
-  const supportedEffortOptions = getReasoningEffortOptions("claudeAgent", input.model);
+  const supportedEffortOptions = getReasoningEffortOptions("claudeCode", input.model);
   const promptEffort =
     requestedEffort === "ultrathink" && supportsClaudeUltrathinkKeyword(input.model)
       ? "ultrathink"
@@ -2069,7 +2069,9 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               payload: {
                 taskId: RuntimeTaskId.makeUnsafe(message.task_id),
                 description: message.description,
-                ...(message.summary ? { summary: message.summary } : {}),
+                ...("summary" in message && typeof message.summary === "string"
+                  ? { summary: message.summary }
+                  : {}),
                 ...(message.usage ? { usage: message.usage } : {}),
                 ...(message.last_tool_name ? { lastToolName: message.last_tool_name } : {}),
               },
@@ -2100,7 +2102,9 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
               payload: {
                 taskId: RuntimeTaskId.makeUnsafe(message.task_id),
                 status: message.status,
-                ...(message.summary ? { summary: message.summary } : {}),
+                ...("summary" in message && typeof message.summary === "string"
+                  ? { summary: message.summary }
+                  : {}),
                 ...(message.usage ? { usage: message.usage } : {}),
               },
             });
@@ -2697,22 +2701,22 @@ function makeClaudeAdapter(options?: ClaudeAdapterLiveOptions) {
             }),
           );
 
-        const providerOptions = input.providerOptions?.claudeAgent;
+        const providerOptions = input.providerOptions?.claudeCode;
         const requestedEffort = resolveReasoningEffortForProvider(
-          "claudeAgent",
-          input.modelOptions?.claudeAgent?.effort ?? null,
+          "claudeCode",
+          input.modelOptions?.claudeCode?.effort ?? null,
         );
-        const supportedEffortOptions = getReasoningEffortOptions("claudeAgent", input.model);
+        const supportedEffortOptions = getReasoningEffortOptions("claudeCode", input.model);
         const effort =
           requestedEffort && supportedEffortOptions.includes(requestedEffort)
             ? requestedEffort
             : null;
         const fastMode =
-          input.modelOptions?.claudeAgent?.fastMode === true && supportsClaudeFastMode(input.model);
+          input.modelOptions?.claudeCode?.fastMode === true && supportsClaudeFastMode(input.model);
         const thinking =
-          typeof input.modelOptions?.claudeAgent?.thinking === "boolean" &&
+          typeof input.modelOptions?.claudeCode?.thinking === "boolean" &&
           supportsClaudeThinkingToggle(input.model)
-            ? input.modelOptions.claudeAgent.thinking
+            ? input.modelOptions.claudeCode.thinking
             : undefined;
         const effectiveEffort = getEffectiveClaudeCodeEffort(effort);
         const permissionMode =

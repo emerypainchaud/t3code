@@ -182,6 +182,7 @@ export function projectEvent(
             title: payload.title,
             workspaceRoot: payload.workspaceRoot,
             defaultModel: payload.defaultModel,
+            executionTarget: payload.executionTarget,
             scripts: payload.scripts,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -213,6 +214,9 @@ export function projectEvent(
                     : {}),
                   ...(payload.defaultModel !== undefined
                     ? { defaultModel: payload.defaultModel }
+                    : {}),
+                  ...(payload.executionTarget !== undefined
+                    ? { executionTarget: payload.executionTarget }
                     : {}),
                   ...(payload.scripts !== undefined ? { scripts: payload.scripts } : {}),
                   updatedAt: payload.updatedAt,
@@ -251,6 +255,7 @@ export function projectEvent(
           {
             id: payload.threadId,
             projectId: payload.projectId,
+            executionTarget: payload.executionTarget,
             title: payload.title,
             model: payload.model,
             runtimeMode: payload.runtimeMode,

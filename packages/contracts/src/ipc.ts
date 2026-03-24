@@ -20,12 +20,25 @@ import type {
   GitStatusResult,
 } from "./git";
 import type {
+  ProjectCreateDirectoryInput,
+  ProjectListDirectoryInput,
+  ProjectListDirectoryResult,
+  ProjectSshCreateDirectoryInput,
+  ProjectSshDirectoryListInput,
+  ProjectSshPreflightInput,
+  ProjectSshPreflightResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project";
-import type { ServerConfig } from "./server";
+import type {
+  ServerConfig,
+  ServerRotateWorkspaceAccessTokenResult,
+  ServerRotateWorkspaceTlsCertificateResult,
+  ServerUpsertKeybindingInput,
+  ServerUpsertKeybindingResult,
+} from "./server";
 import type {
   TerminalClearInput,
   TerminalCloseInput,
@@ -36,7 +49,6 @@ import type {
   TerminalSessionSnapshot,
   TerminalWriteInput,
 } from "./terminal";
-import type { ServerUpsertKeybindingInput, ServerUpsertKeybindingResult } from "./server";
 import type {
   ClientOrchestrationCommand,
   OrchestrationGetFullThreadDiffInput,
@@ -95,8 +107,70 @@ export interface DesktopUpdateActionResult {
   state: DesktopUpdateState;
 }
 
+export interface DesktopRemoteTlsCertificateInspection {
+  url: string;
+  hostname: string;
+  fingerprintSha256: string;
+  subjectName: string | null;
+  issuerName: string | null;
+  validFrom: string | null;
+  validTo: string | null;
+  verificationError: string | null;
+  trusted: boolean;
+  selfSigned: boolean;
+}
+
+export interface DesktopTrustRemoteTlsCertificateInput {
+  url: string;
+  fingerprintSha256: string;
+}
+
+export interface DesktopDeployRemoteWorkspaceInput {
+  host: string;
+  username?: string;
+  port?: number;
+  connectHost?: string;
+  serverPort?: number;
+  workspaceName?: string;
+}
+
+export interface DesktopDeployRemoteWorkspaceResult {
+  workspaceName: string;
+  wsUrl: string;
+  authToken: string;
+  serviceName: string;
+  remoteArch: "x64" | "arm64";
+  lingerEnabled: boolean | null;
+  deployedVersion: string | null;
+  capabilities: {
+    git: boolean;
+    codex: boolean;
+    claudeCode: boolean;
+  };
+  warnings: string[];
+}
+
+export interface DesktopOpenInLocalEditorViaSshInput {
+  editor: EditorId;
+  host: string;
+  username?: string;
+  port?: number;
+  remotePath: string;
+  targetKind: "file" | "directory";
+}
+
+export interface DesktopOpenInLocalEditorViaSshResult {
+  opened: boolean;
+  message: string;
+  command?: string;
+}
+
 export interface DesktopBridge {
   getWsUrl: () => string | null;
+  getLocalSshOpenEditors: () => EditorId[];
+  getPersistedAppSettings: () => string | null;
+  setPersistedAppSettings: (raw: string) => Promise<void>;
+  onPersistedAppSettings: (listener: (raw: string | null) => void) => () => void;
   pickFolder: () => Promise<string | null>;
   confirm: (message: string) => Promise<boolean>;
   setTheme: (theme: DesktopTheme) => Promise<void>;
@@ -110,6 +184,14 @@ export interface DesktopBridge {
   downloadUpdate: () => Promise<DesktopUpdateActionResult>;
   installUpdate: () => Promise<DesktopUpdateActionResult>;
   onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
+  inspectRemoteTlsCertificate: (url: string) => Promise<DesktopRemoteTlsCertificateInspection>;
+  trustRemoteTlsCertificate: (input: DesktopTrustRemoteTlsCertificateInput) => Promise<void>;
+  deployRemoteWorkspaceServer: (
+    input: DesktopDeployRemoteWorkspaceInput,
+  ) => Promise<DesktopDeployRemoteWorkspaceResult>;
+  openInLocalEditorViaSsh: (
+    input: DesktopOpenInLocalEditorViaSshInput,
+  ) => Promise<DesktopOpenInLocalEditorViaSshResult>;
 }
 
 export interface NativeApi {
@@ -127,11 +209,21 @@ export interface NativeApi {
     onEvent: (callback: (event: TerminalEvent) => void) => () => void;
   };
   projects: {
+    listDirectory: (input: ProjectListDirectoryInput) => Promise<ProjectListDirectoryResult>;
+    createDirectory: (input: ProjectCreateDirectoryInput) => Promise<ProjectListDirectoryResult>;
+    listSshDirectory: (input: ProjectSshDirectoryListInput) => Promise<ProjectListDirectoryResult>;
+    createSshDirectory: (
+      input: ProjectSshCreateDirectoryInput,
+    ) => Promise<ProjectListDirectoryResult>;
+    preflightSshTarget: (input: ProjectSshPreflightInput) => Promise<ProjectSshPreflightResult>;
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
   shell: {
     openInEditor: (cwd: string, editor: EditorId) => Promise<void>;
+    openInLocalEditorViaSsh: (
+      input: DesktopOpenInLocalEditorViaSshInput,
+    ) => Promise<DesktopOpenInLocalEditorViaSshResult>;
     openExternal: (url: string) => Promise<void>;
   };
   git: {
@@ -161,6 +253,13 @@ export interface NativeApi {
   server: {
     getConfig: () => Promise<ServerConfig>;
     upsertKeybinding: (input: ServerUpsertKeybindingInput) => Promise<ServerUpsertKeybindingResult>;
+    rotateWorkspaceAccessToken: () => Promise<ServerRotateWorkspaceAccessTokenResult>;
+    rotateWorkspaceTlsCertificate: () => Promise<ServerRotateWorkspaceTlsCertificateResult>;
+    inspectRemoteTlsCertificate: (url: string) => Promise<DesktopRemoteTlsCertificateInspection>;
+    trustRemoteTlsCertificate: (input: DesktopTrustRemoteTlsCertificateInput) => Promise<void>;
+    deployRemoteWorkspaceServer: (
+      input: DesktopDeployRemoteWorkspaceInput,
+    ) => Promise<DesktopDeployRemoteWorkspaceResult>;
   };
   orchestration: {
     getSnapshot: () => Promise<OrchestrationReadModel>;

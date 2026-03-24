@@ -609,7 +609,7 @@ describe("composerDraftStore modelOptions", () => {
         reasoningEffort: "xhigh",
         fastMode: true,
       },
-      claudeAgent: {
+      claudeCode: {
         thinking: false,
       },
     });
@@ -619,7 +619,7 @@ describe("composerDraftStore modelOptions", () => {
         reasoningEffort: "xhigh",
         fastMode: true,
       },
-      claudeAgent: {
+      claudeCode: {
         thinking: false,
       },
     });
@@ -631,7 +631,7 @@ describe("composerDraftStore modelOptions", () => {
       codex: {
         reasoningEffort: "high",
       },
-      claudeAgent: {
+      claudeCode: {
         thinking: true,
       },
     });

@@ -16,7 +16,7 @@ import {
 } from "@t3tools/contracts";
 
 const MODEL_SLUG_SET_BY_PROVIDER: Record<ProviderKind, ReadonlySet<ModelSlug>> = {
-  claudeAgent: new Set(MODEL_OPTIONS_BY_PROVIDER.claudeAgent.map((option) => option.slug)),
+  claudeCode: new Set(MODEL_OPTIONS_BY_PROVIDER.claudeCode.map((option) => option.slug)),
   codex: new Set(MODEL_OPTIONS_BY_PROVIDER.codex.map((option) => option.slug)),
 };
 
@@ -38,16 +38,16 @@ export function getDefaultModel(provider: ProviderKind = "codex"): ModelSlug {
 }
 
 export function supportsClaudeFastMode(model: string | null | undefined): boolean {
-  return normalizeModelSlug(model, "claudeAgent") === CLAUDE_OPUS_4_6_MODEL;
+  return normalizeModelSlug(model, "claudeCode") === CLAUDE_OPUS_4_6_MODEL;
 }
 
 export function supportsClaudeAdaptiveReasoning(model: string | null | undefined): boolean {
-  const normalized = normalizeModelSlug(model, "claudeAgent");
+  const normalized = normalizeModelSlug(model, "claudeCode");
   return normalized === CLAUDE_OPUS_4_6_MODEL || normalized === CLAUDE_SONNET_4_6_MODEL;
 }
 
 export function supportsClaudeMaxEffort(model: string | null | undefined): boolean {
-  return normalizeModelSlug(model, "claudeAgent") === CLAUDE_OPUS_4_6_MODEL;
+  return normalizeModelSlug(model, "claudeCode") === CLAUDE_OPUS_4_6_MODEL;
 }
 
 export function supportsClaudeUltrathinkKeyword(model: string | null | undefined): boolean {
@@ -55,7 +55,7 @@ export function supportsClaudeUltrathinkKeyword(model: string | null | undefined
 }
 
 export function supportsClaudeThinkingToggle(model: string | null | undefined): boolean {
-  return normalizeModelSlug(model, "claudeAgent") === CLAUDE_HAIKU_4_5_MODEL;
+  return normalizeModelSlug(model, "claudeCode") === CLAUDE_HAIKU_4_5_MODEL;
 }
 
 export function isClaudeUltrathinkPrompt(text: string | null | undefined): boolean {
@@ -140,9 +140,9 @@ export function inferProviderForModel(
   model: string | null | undefined,
   fallback: ProviderKind = "codex",
 ): ProviderKind {
-  const normalizedClaude = normalizeModelSlug(model, "claudeAgent");
-  if (normalizedClaude && MODEL_SLUG_SET_BY_PROVIDER.claudeAgent.has(normalizedClaude)) {
-    return "claudeAgent";
+  const normalizedClaude = normalizeModelSlug(model, "claudeCode");
+  if (normalizedClaude && MODEL_SLUG_SET_BY_PROVIDER.claudeCode.has(normalizedClaude)) {
+    return "claudeCode";
   }
 
   const normalizedCodex = normalizeModelSlug(model, "codex");
@@ -150,12 +150,12 @@ export function inferProviderForModel(
     return "codex";
   }
 
-  return typeof model === "string" && model.trim().startsWith("claude-") ? "claudeAgent" : fallback;
+  return typeof model === "string" && model.trim().startsWith("claude-") ? "claudeCode" : fallback;
 }
 
 export function getReasoningEffortOptions(provider: "codex"): ReadonlyArray<CodexReasoningEffort>;
 export function getReasoningEffortOptions(
-  provider: "claudeAgent",
+  provider: "claudeCode",
   model?: string | null | undefined,
 ): ReadonlyArray<ClaudeCodeEffort>;
 export function getReasoningEffortOptions(
@@ -166,7 +166,7 @@ export function getReasoningEffortOptions(
   provider: ProviderKind = "codex",
   model?: string | null | undefined,
 ): ReadonlyArray<ProviderReasoningEffort> {
-  if (provider === "claudeAgent") {
+  if (provider === "claudeCode") {
     if (supportsClaudeMaxEffort(model)) {
       return ["low", "medium", "high", "max", "ultrathink"];
     }
@@ -179,7 +179,7 @@ export function getReasoningEffortOptions(
 }
 
 export function getDefaultReasoningEffort(provider: "codex"): CodexReasoningEffort;
-export function getDefaultReasoningEffort(provider: "claudeAgent"): ClaudeCodeEffort;
+export function getDefaultReasoningEffort(provider: "claudeCode"): ClaudeCodeEffort;
 export function getDefaultReasoningEffort(provider?: ProviderKind): ProviderReasoningEffort;
 export function getDefaultReasoningEffort(
   provider: ProviderKind = "codex",
@@ -192,7 +192,7 @@ export function resolveReasoningEffortForProvider(
   effort: string | null | undefined,
 ): CodexReasoningEffort | null;
 export function resolveReasoningEffortForProvider(
-  provider: "claudeAgent",
+  provider: "claudeCode",
   effort: string | null | undefined,
 ): ClaudeCodeEffort | null;
 export function resolveReasoningEffortForProvider(
@@ -244,9 +244,9 @@ export function normalizeClaudeModelOptions(
   model: string | null | undefined,
   modelOptions: ClaudeModelOptions | null | undefined,
 ): ClaudeModelOptions | undefined {
-  const reasoningOptions = getReasoningEffortOptions("claudeAgent", model);
-  const defaultReasoningEffort = getDefaultReasoningEffort("claudeAgent");
-  const resolvedEffort = resolveReasoningEffortForProvider("claudeAgent", modelOptions?.effort);
+  const reasoningOptions = getReasoningEffortOptions("claudeCode", model);
+  const defaultReasoningEffort = getDefaultReasoningEffort("claudeCode");
+  const resolvedEffort = resolveReasoningEffortForProvider("claudeCode", modelOptions?.effort);
   const effort =
     resolvedEffort &&
     resolvedEffort !== "ultrathink" &&

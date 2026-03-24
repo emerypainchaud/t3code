@@ -35,6 +35,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           title,
           workspace_root,
           default_model,
+          execution_target_json,
           scripts_json,
           created_at,
           updated_at,
@@ -45,6 +46,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           'Project 1',
           '/tmp/project-1',
           'gpt-5-codex',
+          '{"kind":"workspace-local"}',
           '[{"id":"script-1","name":"Build","command":"bun run build","icon":"build","runOnWorktreeCreate":false}]',
           '2026-02-24T00:00:00.000Z',
           '2026-02-24T00:00:01.000Z',
@@ -56,6 +58,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         INSERT INTO projection_threads (
           thread_id,
           project_id,
+          execution_target_json,
           title,
           model,
           branch,
@@ -68,6 +71,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         VALUES (
           'thread-1',
           'project-1',
+          '{"kind":"workspace-local"}',
           'Thread 1',
           'gpt-5-codex',
           NULL,
@@ -235,6 +239,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
           title: "Project 1",
           workspaceRoot: "/tmp/project-1",
           defaultModel: "gpt-5-codex",
+          executionTarget: { kind: "workspace-local" },
           scripts: [
             {
               id: "script-1",
@@ -253,6 +258,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         {
           id: ThreadId.makeUnsafe("thread-1"),
           projectId: asProjectId("project-1"),
+          executionTarget: { kind: "workspace-local" },
           title: "Thread 1",
           model: "gpt-5-codex",
           interactionMode: "default",

@@ -116,6 +116,15 @@ function createBaseServerConfig(): ServerConfig {
       },
     ],
     availableEditors: [],
+    workspaceAccess: {
+      token: "workspace-token",
+      tokenSource: "generated",
+      loopbackBypassEnabled: true,
+      endpoints: [{ label: "Localhost", wsUrl: "ws://localhost:3773", scope: "local" }],
+      tls: {
+        mode: "disabled",
+      },
+    },
   };
 }
 
@@ -222,6 +231,9 @@ function createSnapshotForTargetUser(options: {
         title: "Project",
         workspaceRoot: "/repo/project",
         defaultModel: "gpt-5",
+        executionTarget: {
+          kind: "workspace-local",
+        },
         scripts: [],
         createdAt: NOW_ISO,
         updatedAt: NOW_ISO,
@@ -232,6 +244,9 @@ function createSnapshotForTargetUser(options: {
       {
         id: THREAD_ID,
         projectId: PROJECT_ID,
+        executionTarget: {
+          kind: "workspace-local",
+        },
         title: "Browser test thread",
         model: "gpt-5",
         interactionMode: "default",
@@ -288,6 +303,9 @@ function addThreadToSnapshot(
         projectId: PROJECT_ID,
         title: "New thread",
         model: "gpt-5",
+        executionTarget: {
+          kind: "workspace-local",
+        },
         interactionMode: "default",
         runtimeMode: "full-access",
         branch: "main",
@@ -435,6 +453,36 @@ function resolveWsRpc(body: WsRequestEnvelope["body"]): unknown {
     return {
       entries: [],
       truncated: false,
+    };
+  }
+  if (tag === WS_METHODS.projectsListDirectory) {
+    const directoryPath = typeof body.path === "string" ? body.path : "/repo";
+    return {
+      directoryPath,
+      parentPath: directoryPath === "/" ? null : "/",
+      entries: [],
+      truncated: false,
+    };
+  }
+  if (tag === WS_METHODS.projectsSshListDirectory) {
+    const directoryPath = typeof body.path === "string" ? body.path : "/srv/project";
+    return {
+      directoryPath,
+      parentPath: directoryPath === "/" ? null : "/",
+      entries: [],
+      truncated: false,
+    };
+  }
+  if (tag === WS_METHODS.projectsSshPreflight) {
+    return {
+      suggestedLocalPath: "/var/t3/project-mirrors/test/project",
+      resolvedLocalPath: "/var/t3/project-mirrors/test/project",
+      sshReachable: true,
+      remotePathExists: true,
+      mutagenInstalled: true,
+      localPathWritable: true,
+      remoteShellReady: true,
+      errors: [],
     };
   }
   if (tag === WS_METHODS.terminalOpen) {

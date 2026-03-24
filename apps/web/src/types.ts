@@ -3,6 +3,7 @@ import type {
   OrchestrationProposedPlanId,
   OrchestrationSessionStatus,
   OrchestrationThreadActivity,
+  ProjectExecutionTarget,
   ProjectScript as ContractProjectScript,
   ThreadId,
   ProjectId,
@@ -21,6 +22,7 @@ export const DEFAULT_INTERACTION_MODE: ProviderInteractionMode = "default";
 export const DEFAULT_THREAD_TERMINAL_HEIGHT = 280;
 export const DEFAULT_THREAD_TERMINAL_ID = "default";
 export const MAX_TERMINALS_PER_GROUP = 4;
+export const MAX_THREAD_TERMINAL_COUNT = MAX_TERMINALS_PER_GROUP;
 export type ProjectScript = ContractProjectScript;
 
 export interface ThreadTerminalGroup {
@@ -82,8 +84,7 @@ export interface Project {
   cwd: string;
   model: string;
   expanded: boolean;
-  createdAt?: string | undefined;
-  updatedAt?: string | undefined;
+  executionTarget: ProjectExecutionTarget;
   scripts: ProjectScript[];
 }
 
@@ -91,6 +92,7 @@ export interface Thread {
   id: ThreadId;
   codexThreadId: string | null;
   projectId: ProjectId;
+  executionTarget: ProjectExecutionTarget;
   title: string;
   model: string;
   runtimeMode: RuntimeMode;
@@ -100,7 +102,6 @@ export interface Thread {
   proposedPlans: ProposedPlan[];
   error: string | null;
   createdAt: string;
-  updatedAt?: string | undefined;
   latestTurn: OrchestrationLatestTurn | null;
   lastVisitedAt?: string | undefined;
   branch: string | null;

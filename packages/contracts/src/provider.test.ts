@@ -24,6 +24,12 @@ describe("ProviderSessionStartInput", () => {
         codex: {
           binaryPath: "/usr/local/bin/codex",
           homePath: "/tmp/.codex",
+          shellPath: "/tmp/t3-remote-shell.sh",
+          shellEnvironment: {
+            T3_REMOTE_HOST: "gpu-1.internal",
+            T3_REMOTE_PATH: "/srv/project",
+            T3_LOCAL_PATH: "/var/t3/mirror/project",
+          },
         },
       },
     });
@@ -32,6 +38,12 @@ describe("ProviderSessionStartInput", () => {
     expect(parsed.modelOptions?.codex?.fastMode).toBe(true);
     expect(parsed.providerOptions?.codex?.binaryPath).toBe("/usr/local/bin/codex");
     expect(parsed.providerOptions?.codex?.homePath).toBe("/tmp/.codex");
+    expect(parsed.providerOptions?.codex?.shellPath).toBe("/tmp/t3-remote-shell.sh");
+    expect(parsed.providerOptions?.codex?.shellEnvironment).toEqual({
+      T3_REMOTE_HOST: "gpu-1.internal",
+      T3_REMOTE_PATH: "/srv/project",
+      T3_LOCAL_PATH: "/var/t3/mirror/project",
+    });
   });
 
   it("rejects payloads without runtime mode", () => {
@@ -46,18 +58,18 @@ describe("ProviderSessionStartInput", () => {
   it("accepts claude runtime knobs", () => {
     const parsed = decodeProviderSessionStartInput({
       threadId: "thread-1",
-      provider: "claudeAgent",
+      provider: "claudeCode",
       cwd: "/tmp/workspace",
       model: "claude-sonnet-4-6",
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           thinking: true,
           effort: "max",
           fastMode: true,
         },
       },
       providerOptions: {
-        claudeAgent: {
+        claudeCode: {
           binaryPath: "/usr/local/bin/claude",
           permissionMode: "plan",
           maxThinkingTokens: 12_000,
@@ -65,13 +77,13 @@ describe("ProviderSessionStartInput", () => {
       },
       runtimeMode: "full-access",
     });
-    expect(parsed.provider).toBe("claudeAgent");
-    expect(parsed.modelOptions?.claudeAgent?.thinking).toBe(true);
-    expect(parsed.modelOptions?.claudeAgent?.effort).toBe("max");
-    expect(parsed.modelOptions?.claudeAgent?.fastMode).toBe(true);
-    expect(parsed.providerOptions?.claudeAgent?.binaryPath).toBe("/usr/local/bin/claude");
-    expect(parsed.providerOptions?.claudeAgent?.permissionMode).toBe("plan");
-    expect(parsed.providerOptions?.claudeAgent?.maxThinkingTokens).toBe(12_000);
+    expect(parsed.provider).toBe("claudeCode");
+    expect(parsed.modelOptions?.claudeCode?.thinking).toBe(true);
+    expect(parsed.modelOptions?.claudeCode?.effort).toBe("max");
+    expect(parsed.modelOptions?.claudeCode?.fastMode).toBe(true);
+    expect(parsed.providerOptions?.claudeCode?.binaryPath).toBe("/usr/local/bin/claude");
+    expect(parsed.providerOptions?.claudeCode?.permissionMode).toBe("plan");
+    expect(parsed.providerOptions?.claudeCode?.maxThinkingTokens).toBe(12_000);
     expect(parsed.runtimeMode).toBe("full-access");
   });
 });
@@ -99,14 +111,14 @@ describe("ProviderSendTurnInput", () => {
       threadId: "thread-1",
       model: "claude-sonnet-4-6",
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           effort: "ultrathink",
           fastMode: true,
         },
       },
     });
 
-    expect(parsed.modelOptions?.claudeAgent?.effort).toBe("ultrathink");
-    expect(parsed.modelOptions?.claudeAgent?.fastMode).toBe(true);
+    expect(parsed.modelOptions?.claudeCode?.effort).toBe("ultrathink");
+    expect(parsed.modelOptions?.claudeCode?.fastMode).toBe(true);
   });
 });

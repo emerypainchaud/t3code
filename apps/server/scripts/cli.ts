@@ -113,6 +113,27 @@ const applyDevelopmentIconOverrides = Effect.fn("applyDevelopmentIconOverrides")
   yield* Effect.log("[cli] Applied development icon overrides to dist/client");
 });
 
+const copyRuntimeAssets = Effect.fn("copyRuntimeAssets")(function* (serverDir: string) {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const assets = [{ source: "src/remote-shell.sh", target: "dist/remote-shell.sh" }] as const;
+
+  for (const asset of assets) {
+    const sourcePath = path.join(serverDir, asset.source);
+    const targetPath = path.join(serverDir, asset.target);
+
+    if (!(yield* fs.exists(sourcePath))) {
+      return yield* new CliError({
+        message: `Missing runtime asset source: ${sourcePath}`,
+      });
+    }
+
+    yield* fs.copyFile(sourcePath, targetPath);
+  }
+
+  yield* Effect.log("[cli] Copied runtime assets into dist");
+});
+
 // ---------------------------------------------------------------------------
 // build subcommand
 // ---------------------------------------------------------------------------
@@ -139,6 +160,8 @@ const buildCmd = Command.make(
           shell: process.platform === "win32",
         })`bun tsdown`,
       );
+
+      yield* copyRuntimeAssets(serverDir);
 
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");
@@ -259,8 +282,9 @@ const cli = Command.make("cli").pipe(
   Command.withSubcommands([buildCmd, publishCmd]),
 );
 
-Command.run(cli, { version: "0.0.0" }).pipe(
+const runtimeProgram = Command.run(cli, { version: "0.0.0" }).pipe(
   Effect.scoped,
   Effect.provide([Logger.layer([Logger.consolePretty()]), NodeServices.layer]),
-  NodeRuntime.runMain,
-);
+) as Effect.Effect<void, unknown, never>;
+
+NodeRuntime.runMain(runtimeProgram);

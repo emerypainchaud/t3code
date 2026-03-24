@@ -6,7 +6,10 @@
  *
  * @module Server
  */
+import crypto from "node:crypto";
 import http from "node:http";
+import https from "node:https";
+import os from "node:os";
 import type { Duplex } from "node:stream";
 
 import Mime from "@effect/platform-node/Mime";
@@ -18,14 +21,18 @@ import {
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
+  type ProjectExecutionTarget,
   ProjectId,
+  type ServerWorkspaceAccess,
   ThreadId,
+  TerminalEvent,
   WS_CHANNELS,
   WS_METHODS,
   WebSocketRequest,
-  type WsResponse as WsResponseMessage,
+  WsPush,
+  type WsPushChannel,
+  type WsPushData,
   WsResponse,
-  type WsPushEnvelopeBase,
 } from "@t3tools/contracts";
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import {
@@ -36,7 +43,6 @@ import {
   Layer,
   Path,
   Ref,
-  Result,
   Schema,
   Scope,
   ServiceMap,
@@ -49,7 +55,12 @@ import { createLogger } from "./logger";
 import { GitManager } from "./git/Services/GitManager.ts";
 import { TerminalManager } from "./terminal/Services/Manager.ts";
 import { Keybindings } from "./keybindings";
-import { searchWorkspaceEntries } from "./workspaceEntries";
+import {
+  createWorkspaceDirectory,
+  listWorkspaceDirectory,
+  searchWorkspaceEntries,
+} from "./workspaceEntries";
+import { createSshDirectory, listSshDirectories, preflightSshTarget } from "./projectSsh.ts";
 import { OrchestrationEngineService } from "./orchestration/Services/OrchestrationEngine";
 import { ProjectionSnapshotQuery } from "./orchestration/Services/ProjectionSnapshotQuery";
 import { OrchestrationReactor } from "./orchestration/Services/OrchestrationReactor";
@@ -66,7 +77,6 @@ import {
   normalizeAttachmentRelativePath,
   resolveAttachmentRelativePath,
 } from "./attachmentPaths";
-
 import {
   createAttachmentId,
   resolveAttachmentPath,
@@ -75,9 +85,9 @@ import {
 import { parseBase64DataUrl } from "./imageMime.ts";
 import { AnalyticsService } from "./telemetry/Services/AnalyticsService.ts";
 import { expandHomePath } from "./os-jank.ts";
-import { makeServerPushBus } from "./wsServer/pushBus.ts";
-import { makeServerReadiness } from "./wsServer/readiness.ts";
-import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { resolveServerTlsConfig, rotateServerTlsConfig } from "./serverTls.ts";
+import { RemoteExecutionManager } from "./remoteExecutionManager.ts";
+import { resolveTerminalLaunchInput } from "./terminalLaunch.ts";
 
 /**
  * ServerShape - Service API for server lifecycle control.
@@ -87,7 +97,7 @@ export interface ServerShape {
    * Start HTTP and WebSocket listeners.
    */
   readonly start: Effect.Effect<
-    http.Server,
+    http.Server | https.Server,
     ServerLifecycleError,
     Scope.Scope | ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
   >;
@@ -102,8 +112,12 @@ export interface ServerShape {
  * Server - Service tag for HTTP/WebSocket lifecycle management.
  */
 export class Server extends ServiceMap.Service<Server, ServerShape>()("t3/wsServer/Server") {}
+const WS_CLIENT_PROTOCOL = "t3code.v1";
+const WS_AUTH_PROTOCOL_PREFIX = "t3code.auth.";
+const WORKSPACE_ACCESS_TOKEN_FILENAME = "workspace-access-token.txt";
 
-const isServerNotRunningError = (error: Error): boolean => {
+const isServerNotRunningError = (error: unknown): boolean => {
+  if (!(error instanceof Error)) return false;
   const maybeCode = (error as NodeJS.ErrnoException).code;
   return (
     maybeCode === "ERR_SERVER_NOT_RUNNING" || error.message.toLowerCase().includes("not running")
@@ -119,6 +133,114 @@ function rejectUpgrade(socket: Duplex, statusCode: number, message: string): voi
       "\r\n" +
       message,
   );
+}
+
+function decodeAuthTokenProtocol(protocol: string): string | null {
+  if (!protocol.startsWith(WS_AUTH_PROTOCOL_PREFIX)) {
+    return null;
+  }
+
+  const encoded = protocol.slice(WS_AUTH_PROTOCOL_PREFIX.length);
+  if (encoded.length === 0) {
+    return null;
+  }
+
+  try {
+    return Buffer.from(encoded, "base64url").toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
+function resolveProvidedAuthToken(request: http.IncomingMessage, port: number): string | null {
+  const protocolHeader = request.headers["sec-websocket-protocol"];
+  const protocolValues = Array.isArray(protocolHeader)
+    ? protocolHeader
+    : typeof protocolHeader === "string"
+      ? protocolHeader.split(",")
+      : [];
+  for (const protocol of protocolValues) {
+    const decoded = decodeAuthTokenProtocol(protocol.trim());
+    if (decoded !== null) {
+      return decoded;
+    }
+  }
+
+  try {
+    const url = new URL(request.url ?? "/", `http://localhost:${port}`);
+    return url.searchParams.get("token");
+  } catch {
+    return null;
+  }
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) {
+    return false;
+  }
+
+  const normalized = address.trim();
+  return (
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "::ffff:127.0.0.1" ||
+    normalized.startsWith("::ffff:127.")
+  );
+}
+
+function isLoopbackHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase();
+  return (
+    normalized === "localhost" ||
+    normalized === "127.0.0.1" ||
+    normalized === "::1" ||
+    normalized === "[::1]"
+  );
+}
+
+function collectWorkspaceAccessEndpoints(params: {
+  host: string | undefined;
+  port: number;
+  tls: boolean;
+}): ServerWorkspaceAccess["endpoints"] {
+  const endpoints: Array<ServerWorkspaceAccess["endpoints"][number]> = [];
+  const seen = new Set<string>();
+  const protocol = params.tls ? "wss" : "ws";
+
+  const pushEndpoint = (
+    label: string,
+    host: string,
+    scope: ServerWorkspaceAccess["endpoints"][number]["scope"],
+  ) => {
+    const wsUrl = `${protocol}://${host.includes(":") && !host.startsWith("[") ? `[${host}]` : host}:${params.port}`;
+    if (seen.has(wsUrl)) {
+      return;
+    }
+    seen.add(wsUrl);
+    endpoints.push({ label, wsUrl, scope });
+  };
+
+  pushEndpoint("Localhost", "localhost", "local");
+
+  const host = params.host?.trim();
+  if (host && host !== "0.0.0.0" && host !== "::" && host !== "[::]") {
+    if (!isLoopbackHost(host)) {
+      pushEndpoint(host, host, "public");
+    }
+    return endpoints;
+  }
+
+  const interfaces = os.networkInterfaces();
+  for (const [name, addresses] of Object.entries(interfaces)) {
+    for (const address of addresses ?? []) {
+      if (address.internal || address.family !== "IPv4") {
+        continue;
+      }
+      pushEndpoint(`${name}: ${address.address}`, address.address, "lan");
+    }
+  }
+
+  return endpoints;
 }
 
 function websocketRawToString(raw: unknown): string | null {
@@ -199,8 +321,11 @@ function stripRequestTag<T extends { _tag: string }>(body: T) {
   return Struct.omit(body, ["_tag"]);
 }
 
-const encodeWsResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
-const decodeWebSocketRequest = decodeJsonResult(WebSocketRequest);
+function messageFromCause(cause: Cause.Cause<unknown>): string {
+  const squashed = Cause.squash(cause);
+  const message = squashed instanceof Error ? squashed.message.trim() : String(squashed).trim();
+  return message.length > 0 ? message : Cause.pretty(cause);
+}
 
 export type ServerCoreRuntimeServices =
   | OrchestrationEngineService
@@ -215,6 +340,7 @@ export type ServerRuntimeServices =
   | GitManager
   | GitCore
   | TerminalManager
+  | RemoteExecutionManager
   | Keybindings
   | Open
   | AnalyticsService;
@@ -232,7 +358,7 @@ class RouteRequestError extends Schema.TaggedErrorClass<RouteRequestError>()("Ro
 }) {}
 
 export const createServer = Effect.fn(function* (): Effect.fn.Return<
-  http.Server,
+  http.Server | https.Server,
   ServerLifecycleError,
   Scope.Scope | ServerRuntimeServices | ServerConfig | FileSystem.FileSystem | Path.Path
 > {
@@ -245,6 +371,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     devUrl,
     authToken,
     host,
+    tls,
     logWebSocketEvents,
     autoBootstrapProjectFromCwd,
   } = serverConfig;
@@ -252,11 +379,21 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
   const gitManager = yield* GitManager;
   const terminalManager = yield* TerminalManager;
+  const remoteExecutionManager = yield* RemoteExecutionManager;
   const keybindingsManager = yield* Keybindings;
   const providerHealth = yield* ProviderHealth;
   const git = yield* GitCore;
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
+  const tlsConfig = yield* resolveServerTlsConfig({
+    enabled: tls,
+    stateDir: serverConfig.stateDir,
+    host,
+  }).pipe(
+    Effect.mapError(
+      (cause) => new ServerLifecycleError({ operation: "resolveServerTlsConfig", cause }),
+    ),
+  );
 
   yield* keybindingsManager.syncDefaultKeybindingsOnStartup.pipe(
     Effect.catch((error) =>
@@ -269,36 +406,197 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   );
 
   const providerStatuses = yield* providerHealth.getStatuses;
+  let listeningPort = port;
+  let workspaceTlsState: ServerWorkspaceAccess["tls"] = tlsConfig?.workspaceTls ?? {
+    mode: "disabled",
+  };
+  let currentTlsOptions = tlsConfig?.httpsOptions ?? null;
+  let networkServer: http.Server | https.Server | null = null;
+  const workspaceAccessTokenPath = path.join(
+    serverConfig.stateDir,
+    WORKSPACE_ACCESS_TOKEN_FILENAME,
+  );
+  const persistWorkspaceAccessToken = (token: string) =>
+    fileSystem.writeFileString(workspaceAccessTokenPath, `${token}\n`).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ServerLifecycleError({
+            operation: "persistWorkspaceAccessToken",
+            cause,
+          }),
+      ),
+    );
+  const resolvePersistedWorkspaceAccessToken = Effect.fnUntraced(function* () {
+    const existingToken = authToken?.trim();
+    if (existingToken && existingToken.length > 0) {
+      return {
+        token: existingToken,
+        tokenSource: "configured" as const,
+      };
+    }
+
+    const persistedToken = yield* fileSystem
+      .readFileString(workspaceAccessTokenPath)
+      .pipe(Effect.catch(() => Effect.succeed("")));
+    const normalizedPersistedToken = persistedToken.trim();
+    if (normalizedPersistedToken.length > 0) {
+      return {
+        token: normalizedPersistedToken,
+        tokenSource: "generated" as const,
+      };
+    }
+
+    const generatedToken = crypto.randomBytes(24).toString("hex");
+    yield* fileSystem
+      .makeDirectory(serverConfig.stateDir, { recursive: true })
+      .pipe(Effect.catch(() => Effect.void));
+    yield* persistWorkspaceAccessToken(generatedToken);
+    return {
+      token: generatedToken,
+      tokenSource: "generated" as const,
+    };
+  });
+
+  let workspaceAccessTokenState = yield* resolvePersistedWorkspaceAccessToken();
+
+  const buildWorkspaceAccess = (): ServerWorkspaceAccess => ({
+    token: workspaceAccessTokenState.token,
+    tokenSource: workspaceAccessTokenState.tokenSource,
+    loopbackBypassEnabled: workspaceAccessTokenState.tokenSource === "generated",
+    endpoints: collectWorkspaceAccessEndpoints({ host, port: listeningPort, tls }),
+    tls: workspaceTlsState,
+  });
+
+  const rotateWorkspaceAccessToken = Effect.fnUntraced(function* () {
+    if (workspaceAccessTokenState.tokenSource === "configured") {
+      return yield* new RouteRequestError({
+        message:
+          "Workspace key is controlled by T3CODE_AUTH_TOKEN or --auth-token and cannot be rotated here.",
+      });
+    }
+
+    const nextToken = crypto.randomBytes(24).toString("hex");
+    yield* persistWorkspaceAccessToken(nextToken).pipe(
+      Effect.mapError(
+        () =>
+          new RouteRequestError({
+            message: "Unable to persist rotated workspace key.",
+          }),
+      ),
+    );
+    workspaceAccessTokenState = {
+      token: nextToken,
+      tokenSource: "generated",
+    };
+    return buildWorkspaceAccess();
+  });
+
+  const rotateWorkspaceTlsCertificate = Effect.fnUntraced(function* () {
+    if (!tls) {
+      return yield* new RouteRequestError({
+        message: "TLS is disabled for this server.",
+      });
+    }
+
+    const nextTlsConfig = yield* rotateServerTlsConfig({
+      enabled: true,
+      stateDir: serverConfig.stateDir,
+      host,
+    }).pipe(
+      Effect.mapError(
+        () =>
+          new RouteRequestError({
+            message: "Unable to rotate the workspace TLS certificate.",
+          }),
+      ),
+    );
+    if (!nextTlsConfig) {
+      return yield* new RouteRequestError({
+        message: "TLS is disabled for this server.",
+      });
+    }
+
+    workspaceTlsState = nextTlsConfig.workspaceTls;
+    currentTlsOptions = nextTlsConfig.httpsOptions;
+
+    if (
+      networkServer &&
+      "setSecureContext" in networkServer &&
+      typeof networkServer.setSecureContext === "function"
+    ) {
+      networkServer.setSecureContext(nextTlsConfig.httpsOptions);
+    }
+
+    return buildWorkspaceAccess();
+  });
 
   const clients = yield* Ref.make(new Set<WebSocket>());
+  const nextPushSequence = yield* Ref.make(0);
   const logger = createLogger("ws");
-  const readiness = yield* makeServerReadiness;
 
-  function logOutgoingPush(push: WsPushEnvelopeBase, recipients: number) {
+  function logOutgoingPush(push: WsPush, recipients: number) {
     if (!logWebSocketEvents) return;
     logger.event("outgoing push", {
       channel: push.channel,
-      sequence: push.sequence,
       recipients,
       payload: push.data,
     });
   }
 
-  const pushBus = yield* makeServerPushBus({
-    clients,
-    logOutgoingPush,
+  const encodePush = Schema.encodeEffect(Schema.fromJsonString(WsPush));
+  const sendPush = Effect.fnUntraced(function* <C extends WsPushChannel>(
+    channel: C,
+    data: WsPushData<C>,
+    client?: WebSocket,
+  ) {
+    const push = {
+      type: "push" as const,
+      sequence: yield* Ref.updateAndGet(nextPushSequence, (sequence) => sequence + 1),
+      channel,
+      data,
+    } as WsPush;
+    const message = yield* encodePush(push);
+    let recipients = 0;
+    const targets = client ? [client] : Array.from(yield* Ref.get(clients));
+    for (const target of targets) {
+      if (target.readyState === target.OPEN) {
+        target.send(message);
+        recipients += 1;
+      }
+    }
+    logOutgoingPush(push, recipients);
   });
-  yield* readiness.markPushBusReady;
-  yield* keybindingsManager.start.pipe(
-    Effect.mapError(
-      (cause) => new ServerLifecycleError({ operation: "keybindingsRuntimeStart", cause }),
-    ),
-  );
-  yield* readiness.markKeybindingsReady;
+
+  const onTerminalEvent = Effect.fnUntraced(function* (event: TerminalEvent) {
+    yield* sendPush(WS_CHANNELS.terminalEvent, event);
+  });
 
   const normalizeDispatchCommand = Effect.fnUntraced(function* (input: {
     readonly command: ClientOrchestrationCommand;
   }) {
+    const normalizeExecutionTarget = Effect.fnUntraced(function* (
+      executionTarget: ProjectExecutionTarget,
+    ) {
+      if (executionTarget.kind === "workspace-local") {
+        return executionTarget;
+      }
+
+      return {
+        ...executionTarget,
+        label: executionTarget.label?.trim() || undefined,
+        host: executionTarget.host.trim(),
+        username: executionTarget.username?.trim() || undefined,
+        remotePath: executionTarget.remotePath.trim(),
+        sync: {
+          ...executionTarget.sync,
+          localPath: path.resolve(yield* expandHomePath(executionTarget.sync.localPath.trim())),
+          ignores: executionTarget.sync.ignores
+            .map((entry: string) => entry.trim())
+            .filter(Boolean),
+        },
+      } satisfies ProjectExecutionTarget;
+    });
+
     const normalizeProjectWorkspaceRoot = Effect.fnUntraced(function* (workspaceRoot: string) {
       const normalizedWorkspaceRoot = path.resolve(yield* expandHomePath(workspaceRoot.trim()));
       const workspaceStat = yield* fileSystem
@@ -321,13 +619,24 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
       return {
         ...input.command,
         workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+        ...(input.command.executionTarget !== undefined
+          ? { executionTarget: yield* normalizeExecutionTarget(input.command.executionTarget) }
+          : {}),
       } satisfies OrchestrationCommand;
     }
 
-    if (input.command.type === "project.meta.update" && input.command.workspaceRoot !== undefined) {
+    if (
+      input.command.type === "project.meta.update" &&
+      (input.command.workspaceRoot !== undefined || input.command.executionTarget !== undefined)
+    ) {
       return {
         ...input.command,
-        workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot),
+        ...(input.command.workspaceRoot !== undefined
+          ? { workspaceRoot: yield* normalizeProjectWorkspaceRoot(input.command.workspaceRoot) }
+          : {}),
+        ...(input.command.executionTarget !== undefined
+          ? { executionTarget: yield* normalizeExecutionTarget(input.command.executionTarget) }
+          : {}),
       } satisfies OrchestrationCommand;
     }
 
@@ -370,7 +679,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           };
 
           const attachmentPath = resolveAttachmentPath({
-            attachmentsDir: serverConfig.attachmentsDir,
+            stateDir: serverConfig.stateDir,
             attachment: persistedAttachment,
           });
           if (!attachmentPath) {
@@ -411,7 +720,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   // HTTP server — serves static files or redirects to Vite dev server
-  const httpServer = http.createServer((req, res) => {
+  const handleHttpRequest = (req: http.IncomingMessage, res: http.ServerResponse) => {
     const respond = (
       statusCode: number,
       headers: Record<string, string>,
@@ -423,7 +732,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
     void Effect.runPromise(
       Effect.gen(function* () {
-        const url = new URL(req.url ?? "/", `http://localhost:${port}`);
+        const url = new URL(req.url ?? "/", `${tls ? "https" : "http"}://localhost:${port}`);
         if (tryHandleProjectFaviconRequest(url, res)) {
           return;
         }
@@ -440,11 +749,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
             !normalizedRelativePath.includes("/") && !normalizedRelativePath.includes(".");
           const filePath = isIdLookup
             ? resolveAttachmentPathById({
-                attachmentsDir: serverConfig.attachmentsDir,
+                stateDir: serverConfig.stateDir,
                 attachmentId: normalizedRelativePath,
               })
             : resolveAttachmentRelativePath({
-                attachmentsDir: serverConfig.attachmentsDir,
+                stateDir: serverConfig.stateDir,
                 relativePath: normalizedRelativePath,
               });
           if (!filePath) {
@@ -476,7 +785,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
               }
             }),
           ).pipe(Effect.exit);
-          if (Exit.isFailure(streamExit)) {
+          if (streamExit._tag === "Failure") {
             if (!res.destroyed) {
               res.destroy();
             }
@@ -488,13 +797,11 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           return;
         }
 
-        // In dev mode, redirect to Vite dev server
         if (devUrl) {
           respond(302, { Location: devUrl.href });
           return;
         }
 
-        // Serve static files from the web app build
         if (!staticDir) {
           respond(
             503,
@@ -572,10 +879,24 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         respond(500, { "Content-Type": "text/plain" }, "Internal Server Error");
       }
     });
-  });
+  };
+
+  networkServer = (
+    currentTlsOptions
+      ? https.createServer(currentTlsOptions, handleHttpRequest)
+      : http.createServer(handleHttpRequest)
+  ) as http.Server | https.Server;
 
   // WebSocket server — upgrades from the HTTP server
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    handleProtocols: (protocols) => {
+      if (protocols.has(WS_CLIENT_PROTOCOL)) {
+        return WS_CLIENT_PROTOCOL;
+      }
+      return false;
+    },
+  });
 
   const closeWebSocketServer = Effect.callback<void, ServerLifecycleError>((resume) => {
     wss.close((error) => {
@@ -608,18 +929,17 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   yield* Effect.addFinalizer(() => Scope.close(subscriptionsScope, Exit.void));
 
   yield* Stream.runForEach(orchestrationEngine.streamDomainEvents, (event) =>
-    pushBus.publishAll(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
+    sendPush(ORCHESTRATION_WS_CHANNELS.domainEvent, event),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Stream.runForEach(keybindingsManager.streamChanges, (event) =>
-    pushBus.publishAll(WS_CHANNELS.serverConfigUpdated, {
+    sendPush(WS_CHANNELS.serverConfigUpdated, {
       issues: event.issues,
       providers: providerStatuses,
     }),
   ).pipe(Effect.forkIn(subscriptionsScope));
 
   yield* Scope.provide(orchestrationReactor.start, subscriptionsScope);
-  yield* readiness.markOrchestrationSubscriptionsReady;
 
   let welcomeBootstrapProjectId: ProjectId | undefined;
   let welcomeBootstrapThreadId: ThreadId | undefined;
@@ -690,21 +1010,28 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   const runPromise = Effect.runPromiseWith(runtimeServices);
 
   const unsubscribeTerminalEvents = yield* terminalManager.subscribe(
-    (event) => void Effect.runPromise(pushBus.publishAll(WS_CHANNELS.terminalEvent, event)),
+    (event) => void Effect.runPromise(onTerminalEvent(event)),
   );
   yield* Effect.addFinalizer(() => Effect.sync(() => unsubscribeTerminalEvents()));
-  yield* readiness.markTerminalSubscriptionsReady;
 
-  yield* NodeHttpServer.make(() => httpServer, listenOptions).pipe(
+  yield* NodeHttpServer.make(() => networkServer, listenOptions).pipe(
     Effect.mapError((cause) => new ServerLifecycleError({ operation: "httpServerListen", cause })),
   );
-  yield* readiness.markHttpListening;
+  const address = networkServer.address();
+  listeningPort = typeof address === "object" && address !== null ? address.port : port;
 
   yield* Effect.addFinalizer(() =>
-    Effect.all([closeAllClients, closeWebSocketServer.pipe(Effect.ignoreCause({ log: true }))]),
+    Effect.all([
+      closeAllClients,
+      closeWebSocketServer.pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("failed to close web socket server", { cause: error }),
+        ),
+      ),
+    ]),
   );
 
-  const routeRequest = Effect.fnUntraced(function* (ws: WebSocket, request: WebSocketRequest) {
+  const routeRequest = Effect.fnUntraced(function* (request: WebSocketRequest) {
     switch (request.body._tag) {
       case ORCHESTRATION_WS_METHODS.getSnapshot:
         return yield* projectionReadModelQuery.getSnapshot();
@@ -744,6 +1071,61 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           catch: (cause) =>
             new RouteRequestError({
               message: `Failed to search workspace entries: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.projectsListDirectory: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => listWorkspaceDirectory(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to list workspace directory: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.projectsCreateDirectory: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => createWorkspaceDirectory(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to create workspace directory: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.projectsSshListDirectory: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => listSshDirectories(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to list SSH target directory: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.projectsSshCreateDirectory: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => createSshDirectory(body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to create SSH target directory: ${String(cause)}`,
+            }),
+        });
+      }
+
+      case WS_METHODS.projectsSshPreflight: {
+        const body = stripRequestTag(request.body);
+        return yield* Effect.tryPromise({
+          try: () => preflightSshTarget(serverConfig.stateDir, body),
+          catch: (cause) =>
+            new RouteRequestError({
+              message: `Failed to validate SSH target: ${String(cause)}`,
             }),
         });
       }
@@ -793,13 +1175,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.gitRunStackedAction: {
         const body = stripRequestTag(request.body);
-        return yield* gitManager.runStackedAction(body, {
-          actionId: body.actionId,
-          progressReporter: {
-            publish: (event) =>
-              pushBus.publishClient(ws, WS_CHANNELS.gitActionProgress, event).pipe(Effect.asVoid),
-          },
-        });
+        return yield* gitManager.runStackedAction(body);
       }
 
       case WS_METHODS.gitResolvePullRequest: {
@@ -844,7 +1220,25 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.terminalOpen: {
         const body = stripRequestTag(request.body);
-        return yield* terminalManager.open(body);
+        const snapshot = yield* projectionReadModelQuery.getSnapshot();
+        const resolved = yield* resolveTerminalLaunchInput({
+          request: body,
+          snapshot,
+          remoteExecution: remoteExecutionManager,
+        }).pipe(
+          Effect.catchTag("TerminalLaunchResolutionError", (error) =>
+            Effect.fail(
+              new RouteRequestError({
+                message: error.message,
+              }),
+            ),
+          ),
+        );
+        return yield* terminalManager.open({
+          ...body,
+          cwd: resolved.cwd,
+          ...(resolved.env ? { env: resolved.env } : {}),
+        });
       }
 
       case WS_METHODS.terminalWrite: {
@@ -864,7 +1258,25 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
 
       case WS_METHODS.terminalRestart: {
         const body = stripRequestTag(request.body);
-        return yield* terminalManager.restart(body);
+        const snapshot = yield* projectionReadModelQuery.getSnapshot();
+        const resolved = yield* resolveTerminalLaunchInput({
+          request: body,
+          snapshot,
+          remoteExecution: remoteExecutionManager,
+        }).pipe(
+          Effect.catchTag("TerminalLaunchResolutionError", (error) =>
+            Effect.fail(
+              new RouteRequestError({
+                message: error.message,
+              }),
+            ),
+          ),
+        );
+        return yield* terminalManager.restart({
+          ...body,
+          cwd: resolved.cwd,
+          ...(resolved.env ? { env: resolved.env } : {}),
+        });
       }
 
       case WS_METHODS.terminalClose: {
@@ -881,6 +1293,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
           issues: keybindingsConfig.issues,
           providers: providerStatuses,
           availableEditors,
+          workspaceAccess: buildWorkspaceAccess(),
         };
 
       case WS_METHODS.serverUpsertKeybinding: {
@@ -888,6 +1301,12 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
         const keybindingsConfig = yield* keybindingsManager.upsertKeybindingRule(body);
         return { keybindings: keybindingsConfig, issues: [] };
       }
+
+      case WS_METHODS.serverRotateWorkspaceAccessToken:
+        return yield* rotateWorkspaceAccessToken();
+
+      case WS_METHODS.serverRotateWorkspaceTlsCertificate:
+        return yield* rotateWorkspaceTlsCertificate();
 
       default: {
         const _exhaustiveCheck: never = request.body;
@@ -899,59 +1318,58 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   const handleMessage = Effect.fnUntraced(function* (ws: WebSocket, raw: unknown) {
-    const sendWsResponse = (response: WsResponseMessage) =>
-      encodeWsResponse(response).pipe(
-        Effect.tap((encodedResponse) => Effect.sync(() => ws.send(encodedResponse))),
-        Effect.asVoid,
-      );
+    const encodeResponse = Schema.encodeEffect(Schema.fromJsonString(WsResponse));
 
     const messageText = websocketRawToString(raw);
     if (messageText === null) {
-      return yield* sendWsResponse({
+      const errorResponse = yield* encodeResponse({
         id: "unknown",
         error: { message: "Invalid request format: Failed to read message" },
       });
+      ws.send(errorResponse);
+      return;
     }
 
-    const request = decodeWebSocketRequest(messageText);
-    if (Result.isFailure(request)) {
-      return yield* sendWsResponse({
+    const request = Schema.decodeExit(Schema.fromJsonString(WebSocketRequest))(messageText);
+    if (request._tag === "Failure") {
+      const errorResponse = yield* encodeResponse({
         id: "unknown",
-        error: { message: `Invalid request format: ${formatSchemaError(request.failure)}` },
+        error: { message: `Invalid request format: ${messageFromCause(request.cause)}` },
       });
+      ws.send(errorResponse);
+      return;
     }
 
-    const result = yield* Effect.exit(routeRequest(ws, request.success));
-    if (Exit.isFailure(result)) {
-      return yield* sendWsResponse({
-        id: request.success.id,
-        error: { message: Cause.pretty(result.cause) },
+    const result = yield* Effect.exit(routeRequest(request.value));
+    if (result._tag === "Failure") {
+      const errorResponse = yield* encodeResponse({
+        id: request.value.id,
+        error: { message: messageFromCause(result.cause) },
       });
+      ws.send(errorResponse);
+      return;
     }
 
-    return yield* sendWsResponse({
-      id: request.success.id,
+    const response = yield* encodeResponse({
+      id: request.value.id,
       result: result.value,
     });
+
+    ws.send(response);
   });
 
-  httpServer.on("upgrade", (request, socket, head) => {
+  networkServer.on("upgrade", (request, socket, head) => {
     socket.on("error", () => {}); // Prevent unhandled `EPIPE`/`ECONNRESET` from crashing the process if the client disconnects mid-handshake
 
-    if (authToken) {
-      let providedToken: string | null = null;
-      try {
-        const url = new URL(request.url ?? "/", `http://localhost:${port}`);
-        providedToken = url.searchParams.get("token");
-      } catch {
-        rejectUpgrade(socket, 400, "Invalid WebSocket URL");
-        return;
-      }
-
-      if (providedToken !== authToken) {
-        rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
-        return;
-      }
+    const providedToken = resolveProvidedAuthToken(request, listeningPort);
+    const loopbackBypassEnabled = workspaceAccessTokenState.tokenSource === "generated";
+    const isLoopbackClient = isLoopbackAddress(request.socket.remoteAddress);
+    if (
+      providedToken !== workspaceAccessTokenState.token &&
+      (!loopbackBypassEnabled || !isLoopbackClient)
+    ) {
+      rejectUpgrade(socket, 401, "Unauthorized WebSocket connection");
+      return;
     }
 
     wss.handleUpgrade(request, socket, head, (ws) => {
@@ -960,28 +1378,30 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
   });
 
   wss.on("connection", (ws) => {
+    void runPromise(Ref.update(clients, (clients) => clients.add(ws)));
+
     const segments = cwd.split(/[/\\]/).filter(Boolean);
     const projectName = segments[segments.length - 1] ?? "project";
 
-    const welcomeData = {
-      cwd,
-      projectName,
-      ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
-      ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
-    };
-    // Send welcome before adding to broadcast set so publishAll calls
-    // cannot reach this client before the welcome arrives.
     void runPromise(
-      readiness.awaitServerReady.pipe(
-        Effect.flatMap(() => pushBus.publishClient(ws, WS_CHANNELS.serverWelcome, welcomeData)),
-        Effect.flatMap((delivered) =>
-          delivered ? Ref.update(clients, (clients) => clients.add(ws)) : Effect.void,
-        ),
+      sendPush(
+        WS_CHANNELS.serverWelcome,
+        {
+          cwd,
+          projectName,
+          ...(welcomeBootstrapProjectId ? { bootstrapProjectId: welcomeBootstrapProjectId } : {}),
+          ...(welcomeBootstrapThreadId ? { bootstrapThreadId: welcomeBootstrapThreadId } : {}),
+        },
+        ws,
       ),
     );
 
     ws.on("message", (raw) => {
-      void runPromise(handleMessage(ws, raw).pipe(Effect.ignoreCause({ log: true })));
+      void runPromise(
+        handleMessage(ws, raw).pipe(
+          Effect.catch((error) => Effect.logError("Error handling message", error)),
+        ),
+      );
     });
 
     ws.on("close", () => {
@@ -1003,7 +1423,7 @@ export const createServer = Effect.fn(function* (): Effect.fn.Return<
     });
   });
 
-  return httpServer;
+  return networkServer;
 });
 
 export const ServerLive = Layer.succeed(Server, {

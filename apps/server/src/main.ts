@@ -7,6 +7,9 @@
  * @module CliConfig
  */
 import { Config, Data, Effect, FileSystem, Layer, Option, Path, Schema, ServiceMap } from "effect";
+import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
+import * as NodePath from "@effect/platform-node/NodePath";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Command, Flag } from "effect/unstable/cli";
 import { NetService } from "@t3tools/shared/Net";
 import {
@@ -41,6 +44,7 @@ interface CliInput {
   readonly devUrl: Option.Option<URL>;
   readonly noBrowser: Option.Option<boolean>;
   readonly authToken: Option.Option<string>;
+  readonly tls: Option.Option<boolean>;
   readonly autoBootstrapProjectFromCwd: Option.Option<boolean>;
   readonly logWebSocketEvents: Option.Option<boolean>;
 }
@@ -110,6 +114,7 @@ const CliEnvConfig = Config.all({
     Config.option,
     Config.map(Option.getOrUndefined),
   ),
+  tls: Config.boolean("T3CODE_TLS").pipe(Config.option, Config.map(Option.getOrUndefined)),
   autoBootstrapProjectFromCwd: Config.boolean("T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD").pipe(
     Config.option,
     Config.map(Option.getOrUndefined),
@@ -156,6 +161,7 @@ const ServerConfigLive = (input: CliInput) =>
       const derivedPaths = yield* deriveServerPaths(baseDir, devUrl);
       const noBrowser = resolveBooleanFlag(input.noBrowser, env.noBrowser ?? mode === "desktop");
       const authToken = Option.getOrUndefined(input.authToken) ?? env.authToken;
+      const tls = resolveBooleanFlag(input.tls, env.tls ?? false);
       const autoBootstrapProjectFromCwd = resolveBooleanFlag(
         input.autoBootstrapProjectFromCwd,
         env.autoBootstrapProjectFromCwd ?? mode === "web",
@@ -181,6 +187,7 @@ const ServerConfigLive = (input: CliInput) =>
         devUrl,
         noBrowser,
         authToken,
+        tls,
         autoBootstrapProjectFromCwd,
         logWebSocketEvents,
       } satisfies ServerConfigShape;
@@ -190,14 +197,17 @@ const ServerConfigLive = (input: CliInput) =>
   );
 
 const LayerLive = (input: CliInput) =>
-  Layer.empty.pipe(
-    Layer.provideMerge(makeServerRuntimeServicesLayer()),
-    Layer.provideMerge(makeServerProviderLayer()),
-    Layer.provideMerge(ProviderHealthLive),
-    Layer.provideMerge(SqlitePersistence.layerConfig),
-    Layer.provideMerge(ServerLoggerLive),
-    Layer.provideMerge(AnalyticsServiceLayerLive),
-    Layer.provideMerge(ServerConfigLive(input)),
+  Layer.mergeAll(
+    NodeServices.layer,
+    NodeFileSystem.layer,
+    NodePath.layer,
+    makeServerRuntimeServicesLayer(),
+    makeServerProviderLayer(),
+    ProviderHealthLive,
+    SqlitePersistence.layerConfig,
+    ServerLoggerLive,
+    AnalyticsServiceLayerLive,
+    ServerConfigLive(input),
   );
 
 const isWildcardHost = (host: string | undefined): boolean =>
@@ -231,7 +241,7 @@ export const recordStartupHeartbeat = Effect.gen(function* () {
   });
 });
 
-const makeServerProgram = (input: CliInput) =>
+const makeServerProgram = (input: CliInput): Effect.Effect<void, unknown, never> =>
   Effect.gen(function* () {
     const cliConfig = yield* CliConfig;
     const { start, stopSignal } = yield* Server;
@@ -252,10 +262,10 @@ const makeServerProgram = (input: CliInput) =>
     yield* start;
     yield* Effect.forkChild(recordStartupHeartbeat);
 
-    const localUrl = `http://localhost:${config.port}`;
+    const localUrl = `${config.tls ? "https" : "http"}://localhost:${config.port}`;
     const bindUrl =
       config.host && !isWildcardHost(config.host)
-        ? `http://${formatHostForUrl(config.host)}:${config.port}`
+        ? `${config.tls ? "https" : "http"}://${formatHostForUrl(config.host)}:${config.port}`
         : localUrl;
     const { authToken, devUrl, ...safeConfig } = config;
     yield* Effect.logInfo("T3 Code running", {
@@ -276,7 +286,7 @@ const makeServerProgram = (input: CliInput) =>
     }
 
     return yield* stopSignal;
-  }).pipe(Effect.provide(LayerLive(input)));
+  }).pipe(Effect.provide(LayerLive(input))) as Effect.Effect<void, unknown, never>;
 
 /**
  * These flags mirrors the environment variables and the config shape.
@@ -313,6 +323,12 @@ const authTokenFlag = Flag.string("auth-token").pipe(
   Flag.withAlias("token"),
   Flag.optional,
 );
+const tlsFlag = Flag.boolean("tls").pipe(
+  Flag.withDescription(
+    "Enable HTTPS/WSS with an auto-generated self-signed certificate (equivalent to T3CODE_TLS).",
+  ),
+  Flag.optional,
+);
 const autoBootstrapProjectFromCwdFlag = Flag.boolean("auto-bootstrap-project-from-cwd").pipe(
   Flag.withDescription(
     "Create a project for the current working directory on startup when missing.",
@@ -335,6 +351,7 @@ export const t3Cli = Command.make("t3", {
   devUrl: devUrlFlag,
   noBrowser: noBrowserFlag,
   authToken: authTokenFlag,
+  tls: tlsFlag,
   autoBootstrapProjectFromCwd: autoBootstrapProjectFromCwdFlag,
   logWebSocketEvents: logWebSocketEventsFlag,
 }).pipe(

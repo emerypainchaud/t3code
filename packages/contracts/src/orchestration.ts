@@ -14,6 +14,7 @@ import {
   TrimmedNonEmptyString,
   TurnId,
 } from "./baseSchemas";
+import { ProjectExecutionTarget } from "./executionTarget";
 
 export const ORCHESTRATION_WS_METHODS = {
   getSnapshot: "orchestration.getSnapshot",
@@ -27,7 +28,7 @@ export const ORCHESTRATION_WS_CHANNELS = {
   domainEvent: "orchestration.domainEvent",
 } as const;
 
-export const ProviderKind = Schema.Literals(["codex", "claudeAgent"]);
+export const ProviderKind = Schema.Literals(["codex", "claudeCode"]);
 export type ProviderKind = typeof ProviderKind.Type;
 export const ProviderApprovalPolicy = Schema.Literals([
   "untrusted",
@@ -47,17 +48,21 @@ export const DEFAULT_PROVIDER_KIND: ProviderKind = "codex";
 export const CodexProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyString),
   homePath: Schema.optional(TrimmedNonEmptyString),
+  shellPath: Schema.optional(TrimmedNonEmptyString),
+  shellEnvironment: Schema.optional(Schema.Record(TrimmedNonEmptyString, Schema.String)),
 });
 
 export const ClaudeProviderStartOptions = Schema.Struct({
   binaryPath: Schema.optional(TrimmedNonEmptyString),
   permissionMode: Schema.optional(TrimmedNonEmptyString),
   maxThinkingTokens: Schema.optional(NonNegativeInt),
+  shellPath: Schema.optional(TrimmedNonEmptyString),
+  shellEnvironment: Schema.optional(Schema.Record(TrimmedNonEmptyString, Schema.String)),
 });
 
 export const ProviderStartOptions = Schema.Struct({
   codex: Schema.optional(CodexProviderStartOptions),
-  claudeAgent: Schema.optional(ClaudeProviderStartOptions),
+  claudeCode: Schema.optional(ClaudeProviderStartOptions),
 });
 export type ProviderStartOptions = typeof ProviderStartOptions.Type;
 
@@ -67,6 +72,8 @@ export const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 export const ProviderInteractionMode = Schema.Literals(["default", "plan"]);
 export type ProviderInteractionMode = typeof ProviderInteractionMode.Type;
 export const DEFAULT_PROVIDER_INTERACTION_MODE: ProviderInteractionMode = "default";
+export const ProviderServiceTier = Schema.Literals(["fast", "flex"]);
+export type ProviderServiceTier = typeof ProviderServiceTier.Type;
 export const ProviderRequestKind = Schema.Literals(["command", "file-read", "file-change"]);
 export type ProviderRequestKind = typeof ProviderRequestKind.Type;
 export const AssistantDeliveryMode = Schema.Literals(["buffered", "streaming"]);
@@ -140,11 +147,18 @@ export const ProjectScript = Schema.Struct({
 });
 export type ProjectScript = typeof ProjectScript.Type;
 
+const DefaultProjectExecutionTarget = ProjectExecutionTarget.pipe(
+  Schema.withDecodingDefault(() => ({
+    kind: "workspace-local" as const,
+  })),
+);
+
 export const OrchestrationProject = Schema.Struct({
   id: ProjectId,
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
+  executionTarget: DefaultProjectExecutionTarget,
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -272,6 +286,7 @@ export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
+  executionTarget: DefaultProjectExecutionTarget,
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode,
@@ -307,6 +322,7 @@ export const ProjectCreateCommand = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.optional(TrimmedNonEmptyString),
+  executionTarget: Schema.optional(ProjectExecutionTarget),
   createdAt: IsoDateTime,
 });
 
@@ -317,6 +333,7 @@ const ProjectMetaUpdateCommand = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(TrimmedNonEmptyString),
+  executionTarget: Schema.optional(ProjectExecutionTarget),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
 });
 
@@ -386,6 +403,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
   }),
   provider: Schema.optional(ProviderKind),
   model: Schema.optional(TrimmedNonEmptyString),
+  serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   modelOptions: Schema.optional(ProviderModelOptions),
   providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
@@ -409,6 +427,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   }),
   provider: Schema.optional(ProviderKind),
   model: Schema.optional(TrimmedNonEmptyString),
+  serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   modelOptions: Schema.optional(ProviderModelOptions),
   providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),
@@ -611,6 +630,7 @@ export const ProjectCreatedPayload = Schema.Struct({
   title: TrimmedNonEmptyString,
   workspaceRoot: TrimmedNonEmptyString,
   defaultModel: Schema.NullOr(TrimmedNonEmptyString),
+  executionTarget: DefaultProjectExecutionTarget,
   scripts: Schema.Array(ProjectScript),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
@@ -621,6 +641,7 @@ export const ProjectMetaUpdatedPayload = Schema.Struct({
   title: Schema.optional(TrimmedNonEmptyString),
   workspaceRoot: Schema.optional(TrimmedNonEmptyString),
   defaultModel: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  executionTarget: Schema.optional(ProjectExecutionTarget),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
   updatedAt: IsoDateTime,
 });
@@ -633,6 +654,7 @@ export const ProjectDeletedPayload = Schema.Struct({
 export const ThreadCreatedPayload = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
+  executionTarget: DefaultProjectExecutionTarget,
   title: TrimmedNonEmptyString,
   model: TrimmedNonEmptyString,
   runtimeMode: RuntimeMode.pipe(Schema.withDecodingDefault(() => DEFAULT_RUNTIME_MODE)),
@@ -690,6 +712,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
   messageId: MessageId,
   provider: Schema.optional(ProviderKind),
   model: Schema.optional(TrimmedNonEmptyString),
+  serviceTier: Schema.optional(Schema.NullOr(ProviderServiceTier)),
   modelOptions: Schema.optional(ProviderModelOptions),
   providerOptions: Schema.optional(ProviderStartOptions),
   assistantDeliveryMode: Schema.optional(AssistantDeliveryMode),

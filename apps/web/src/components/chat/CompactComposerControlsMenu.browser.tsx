@@ -13,11 +13,11 @@ import { useComposerDraftStore } from "../../composerDraftStore";
 async function mountMenu(props?: {
   model?: string;
   prompt?: string;
-  provider?: "codex" | "claudeAgent";
+  provider?: "codex" | "claudeCode";
   modelOptions?: ProviderModelOptions | null;
 }) {
   const threadId = ThreadId.makeUnsafe("thread-compact-menu");
-  const provider = props?.provider ?? "claudeAgent";
+  const provider = props?.provider ?? "claudeCode";
   const draftsByThreadId = {} as ReturnType<
     typeof useComposerDraftStore.getState
   >["draftsByThreadId"];
@@ -139,7 +139,7 @@ describe("CompactComposerControlsMenu", () => {
     const mounted = await mountMenu({
       model: "claude-haiku-4-5",
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           thinking: true,
         },
       },
@@ -164,7 +164,7 @@ describe("CompactComposerControlsMenu", () => {
       model: "claude-opus-4-6",
       prompt: "Ultrathink:\nInvestigate this",
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           effort: "high",
         },
       },

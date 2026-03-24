@@ -704,6 +704,7 @@ describe("WebSocket Server", () => {
         workspaceRoot: string;
         title: string;
         defaultModel: string | null;
+        executionTarget: { kind: string };
       }>;
       threads: Array<{
         id: string;
@@ -726,6 +727,7 @@ describe("WebSocket Server", () => {
           workspaceRoot: "/test/bootstrap-workspace",
           title: "bootstrap-workspace",
           defaultModel: "gpt-5-codex",
+          executionTarget: { kind: "workspace-local" },
         }),
       ]),
     );
@@ -1693,6 +1695,7 @@ describe("WebSocket Server", () => {
   it("supports git.status over websocket", async () => {
     const statusResult = {
       branch: "feature/test",
+      forge: null,
       hasWorkingTreeChanges: true,
       workingTree: {
         files: [{ path: "src/index.ts", insertions: 7, deletions: 2 }],

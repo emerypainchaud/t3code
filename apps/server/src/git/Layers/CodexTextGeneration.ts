@@ -372,7 +372,7 @@ const makeCodexTextGeneration = Effect.gen(function* () {
 
   const generatePrContent: TextGenerationShape["generatePrContent"] = (input) => {
     const prompt = [
-      "You write GitHub pull request content.",
+      "You write review request content for GitHub pull requests and GitLab merge requests.",
       "Return a JSON object with keys: title, body.",
       "Rules:",
       "- title should be concise and specific",

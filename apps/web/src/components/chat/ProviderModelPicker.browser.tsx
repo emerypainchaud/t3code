@@ -6,7 +6,7 @@ import { render } from "vitest-browser-react";
 import { ProviderModelPicker } from "./ProviderModelPicker";
 
 const MODEL_OPTIONS_BY_PROVIDER = {
-  claudeAgent: [
+  claudeCode: [
     { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
     { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
     { slug: "claude-haiku-4-5", name: "Claude Haiku 4.5" },
@@ -52,7 +52,7 @@ describe("ProviderModelPicker", () => {
 
   it("shows provider submenus when provider switching is allowed", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       model: "claude-opus-4-6",
       lockedProvider: null,
     });
@@ -73,9 +73,9 @@ describe("ProviderModelPicker", () => {
 
   it("shows models directly when the provider is locked mid-thread", async () => {
     const mounted = await mountPicker({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       model: "claude-opus-4-6",
-      lockedProvider: "claudeAgent",
+      lockedProvider: "claudeCode",
     });
 
     try {

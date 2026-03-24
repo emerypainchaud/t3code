@@ -1,8 +1,9 @@
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
-import { Effect, Layer } from "effect";
+import { ProjectExecutionTarget } from "@t3tools/contracts";
+import { Effect, Layer, Option, Schema, Struct } from "effect";
 
-import { toPersistenceSqlError } from "../Errors.ts";
+import { toPersistenceDecodeError, toPersistenceSqlError } from "../Errors.ts";
 import {
   DeleteProjectionThreadInput,
   GetProjectionThreadInput,
@@ -12,16 +13,30 @@ import {
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
 
+const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
+  Struct.assign({
+    executionTarget: Schema.fromJsonString(ProjectExecutionTarget),
+  }),
+);
+
+function toPersistenceSqlOrDecodeError(sqlOperation: string, decodeOperation: string) {
+  return (cause: unknown) =>
+    Schema.isSchemaError(cause)
+      ? toPersistenceDecodeError(decodeOperation)(cause)
+      : toPersistenceSqlError(sqlOperation)(cause);
+}
+
 const makeProjectionThreadRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
   const upsertProjectionThreadRow = SqlSchema.void({
-    Request: ProjectionThread,
+    Request: ProjectionThreadDbRowSchema,
     execute: (row) =>
       sql`
         INSERT INTO projection_threads (
           thread_id,
           project_id,
+          execution_target_json,
           title,
           model,
           runtime_mode,
@@ -36,6 +51,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         VALUES (
           ${row.threadId},
           ${row.projectId},
+          ${row.executionTarget},
           ${row.title},
           ${row.model},
           ${row.runtimeMode},
@@ -50,6 +66,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         ON CONFLICT (thread_id)
         DO UPDATE SET
           project_id = excluded.project_id,
+          execution_target_json = excluded.execution_target_json,
           title = excluded.title,
           model = excluded.model,
           runtime_mode = excluded.runtime_mode,
@@ -65,12 +82,13 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const getProjectionThreadRow = SqlSchema.findOneOption({
     Request: GetProjectionThreadInput,
-    Result: ProjectionThread,
+    Result: ProjectionThreadDbRowSchema,
     execute: ({ threadId }) =>
       sql`
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          execution_target_json AS "executionTarget",
           title,
           model,
           runtime_mode AS "runtimeMode",
@@ -88,12 +106,13 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const listProjectionThreadRows = SqlSchema.findAll({
     Request: ListProjectionThreadsByProjectInput,
-    Result: ProjectionThread,
+    Result: ProjectionThreadDbRowSchema,
     execute: ({ projectId }) =>
       sql`
         SELECT
           thread_id AS "threadId",
           project_id AS "projectId",
+          execution_target_json AS "executionTarget",
           title,
           model,
           runtime_mode AS "runtimeMode",
@@ -121,17 +140,38 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
 
   const upsert: ProjectionThreadRepositoryShape["upsert"] = (row) =>
     upsertProjectionThreadRow(row).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.upsert:query")),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionThreadRepository.upsert:query",
+          "ProjectionThreadRepository.upsert:encodeRequest",
+        ),
+      ),
     );
 
   const getById: ProjectionThreadRepositoryShape["getById"] = (input) =>
     getProjectionThreadRow(input).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.getById:query")),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionThreadRepository.getById:query",
+          "ProjectionThreadRepository.getById:decodeRow",
+        ),
+      ),
+      Effect.flatMap((rowOption) =>
+        Option.match(rowOption, {
+          onNone: () => Effect.succeed(Option.none()),
+          onSome: (row) => Effect.succeed(Option.some(row)),
+        }),
+      ),
     );
 
   const listByProjectId: ProjectionThreadRepositoryShape["listByProjectId"] = (input) =>
     listProjectionThreadRows(input).pipe(
-      Effect.mapError(toPersistenceSqlError("ProjectionThreadRepository.listByProjectId:query")),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionThreadRepository.listByProjectId:query",
+          "ProjectionThreadRepository.listByProjectId:decodeRow",
+        ),
+      ),
     );
 
   const deleteById: ProjectionThreadRepositoryShape["deleteById"] = (input) =>

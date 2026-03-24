@@ -11,18 +11,57 @@ type RuntimeSqliteLayerConfig = {
 type Loader = {
   layer: (config: RuntimeSqliteLayerConfig) => Layer.Layer<SqlClient.SqlClient>;
 };
-const defaultSqliteClientLoaders = {
-  bun: () => import("@effect/sql-sqlite-bun/SqliteClient"),
-  node: () => import("../NodeSqliteClient.ts"),
-} satisfies Record<string, () => Promise<Loader>>;
+const dynamicImport = new Function("specifier", "return import(specifier)") as <T>(
+  specifier: string,
+) => Promise<T>;
+const bunSqliteClientSpecifiers = [
+  new URL("./persistence/BunSqliteClientLoader.mjs", import.meta.url).href,
+];
+const nodeSqliteClientSpecifiers = [
+  new URL("../NodeSqliteClient.ts", import.meta.url).href,
+  new URL("./NodeSqliteClient.mjs", import.meta.url).href,
+  new URL("./persistence/NodeSqliteClient.mjs", import.meta.url).href,
+];
+
+async function importBunSqliteClient(): Promise<Loader> {
+  try {
+    return await import("../BunSqliteClientLoader.ts");
+  } catch {
+    for (const specifier of bunSqliteClientSpecifiers) {
+      try {
+        return await dynamicImport<Loader>(specifier);
+      } catch {
+        // The dist output path differs from the source-adjacent development path.
+      }
+    }
+
+    throw new Error("Unable to locate BunSqliteClient runtime module.");
+  }
+}
+
+async function importNodeSqliteClient(): Promise<Loader> {
+  for (const specifier of nodeSqliteClientSpecifiers) {
+    try {
+      return await dynamicImport<Loader>(specifier);
+    } catch {
+      // The dist output path differs from the source-adjacent development path.
+    }
+  }
+
+  throw new Error("Unable to locate NodeSqliteClient runtime module.");
+}
 
 const makeRuntimeSqliteLayer = (
   config: RuntimeSqliteLayerConfig,
 ): Layer.Layer<SqlClient.SqlClient> =>
   Effect.gen(function* () {
-    const runtime = process.versions.bun !== undefined ? "bun" : "node";
-    const loader = defaultSqliteClientLoaders[runtime];
-    const clientModule = yield* Effect.promise<Loader>(loader);
+    const clientModule = yield* Effect.promise<Loader>(() => {
+      if (typeof Bun !== "undefined") {
+        return importBunSqliteClient();
+      }
+
+      return importNodeSqliteClient();
+    });
     return clientModule.layer(config);
   }).pipe(Layer.unwrap);
 

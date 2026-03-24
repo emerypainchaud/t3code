@@ -1,4 +1,8 @@
-import { EditorId, type ResolvedKeybindingsConfig } from "@t3tools/contracts";
+import {
+  EditorId,
+  type ProjectExecutionTarget,
+  type ResolvedKeybindingsConfig,
+} from "@t3tools/contracts";
 import { memo, useCallback, useEffect, useMemo } from "react";
 import { isOpenFavoriteEditorShortcut, shortcutLabelForCommand } from "../../keybindings";
 import { usePreferredEditor } from "../../editorPreferences";
@@ -9,6 +13,9 @@ import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu
 import { AntigravityIcon, CursorIcon, Icon, VisualStudioCode, Zed } from "../Icons";
 import { isMacPlatform, isWindowsPlatform } from "~/lib/utils";
 import { readNativeApi } from "~/nativeApi";
+import type { AppWorkspace } from "~/appSettings";
+import { openInEditorWithContext, resolveOpenInEditorOptions } from "~/remoteEditorOpen";
+import { toastManager } from "../ui/toast";
 
 const resolveOptions = (platform: string, availableEditors: ReadonlyArray<EditorId>) => {
   const baseOptions: ReadonlyArray<{ label: string; Icon: Icon; value: EditorId }> = [
@@ -47,13 +54,29 @@ const resolveOptions = (platform: string, availableEditors: ReadonlyArray<Editor
 
 export const OpenInPicker = memo(function OpenInPicker({
   keybindings,
-  availableEditors,
-  openInCwd,
+  availableEditors: serverAvailableEditors,
+  openInCwd: serverPath,
+  workspace,
+  executionTarget,
+  targetKind,
 }: {
   keybindings: ResolvedKeybindingsConfig;
   availableEditors: ReadonlyArray<EditorId>;
   openInCwd: string | null;
+  workspace: AppWorkspace;
+  executionTarget?: ProjectExecutionTarget | null | undefined;
+  targetKind: "file" | "directory";
 }) {
+  const availableEditors = useMemo(
+    () =>
+      resolveOpenInEditorOptions({
+        workspace,
+        executionTarget,
+        serverPath,
+        availableEditors: serverAvailableEditors,
+      }),
+    [executionTarget, serverAvailableEditors, serverPath, workspace],
+  );
   const [preferredEditor, setPreferredEditor] = usePreferredEditor(availableEditors);
   const options = useMemo(
     () => resolveOptions(navigator.platform, availableEditors),
@@ -64,13 +87,33 @@ export const OpenInPicker = memo(function OpenInPicker({
   const openInEditor = useCallback(
     (editorId: EditorId | null) => {
       const api = readNativeApi();
-      if (!api || !openInCwd) return;
+      if (!api || !serverPath) return;
       const editor = editorId ?? preferredEditor;
       if (!editor) return;
-      void api.shell.openInEditor(openInCwd, editor);
+      void openInEditorWithContext(api, editor, {
+        workspace,
+        executionTarget,
+        serverPath,
+        targetKind,
+        availableEditors: serverAvailableEditors,
+      }).catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to open in editor",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
       setPreferredEditor(editor);
     },
-    [preferredEditor, openInCwd, setPreferredEditor],
+    [
+      executionTarget,
+      preferredEditor,
+      serverAvailableEditors,
+      serverPath,
+      setPreferredEditor,
+      targetKind,
+      workspace,
+    ],
   );
 
   const openFavoriteEditorShortcutLabel = useMemo(
@@ -82,22 +125,42 @@ export const OpenInPicker = memo(function OpenInPicker({
     const handler = (e: globalThis.KeyboardEvent) => {
       const api = readNativeApi();
       if (!isOpenFavoriteEditorShortcut(e, keybindings)) return;
-      if (!api || !openInCwd) return;
+      if (!api || !serverPath) return;
       if (!preferredEditor) return;
 
       e.preventDefault();
-      void api.shell.openInEditor(openInCwd, preferredEditor);
+      void openInEditorWithContext(api, preferredEditor, {
+        workspace,
+        executionTarget,
+        serverPath,
+        targetKind,
+        availableEditors: serverAvailableEditors,
+      }).catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Unable to open in editor",
+          description: error instanceof Error ? error.message : "An unexpected error occurred.",
+        });
+      });
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [preferredEditor, keybindings, openInCwd]);
+  }, [
+    executionTarget,
+    keybindings,
+    preferredEditor,
+    serverAvailableEditors,
+    serverPath,
+    targetKind,
+    workspace,
+  ]);
 
   return (
     <Group aria-label="Subscription actions">
       <Button
         size="xs"
         variant="outline"
-        disabled={!preferredEditor || !openInCwd}
+        disabled={!preferredEditor || !serverPath}
         onClick={() => openInEditor(preferredEditor)}
       >
         {primaryOption?.Icon && <primaryOption.Icon aria-hidden="true" className="size-3.5" />}

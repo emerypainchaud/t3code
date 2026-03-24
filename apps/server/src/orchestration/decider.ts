@@ -1,3 +1,4 @@
+import crypto from "node:crypto";
 import type {
   OrchestrationCommand,
   OrchestrationEvent,
@@ -15,6 +16,7 @@ import {
 
 const nowIso = () => new Date().toISOString();
 const DEFAULT_ASSISTANT_DELIVERY_MODE = "buffered" as const;
+const DEFAULT_PROJECT_EXECUTION_TARGET = { kind: "workspace-local" } as const;
 
 const defaultMetadata: Omit<OrchestrationEvent, "sequence" | "type" | "payload"> = {
   eventId: crypto.randomUUID() as OrchestrationEvent["eventId"],
@@ -78,6 +80,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           title: command.title,
           workspaceRoot: command.workspaceRoot,
           defaultModel: command.defaultModel ?? null,
+          executionTarget: command.executionTarget ?? DEFAULT_PROJECT_EXECUTION_TARGET,
           scripts: [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
@@ -105,6 +108,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           ...(command.title !== undefined ? { title: command.title } : {}),
           ...(command.workspaceRoot !== undefined ? { workspaceRoot: command.workspaceRoot } : {}),
           ...(command.defaultModel !== undefined ? { defaultModel: command.defaultModel } : {}),
+          ...(command.executionTarget !== undefined
+            ? { executionTarget: command.executionTarget }
+            : {}),
           ...(command.scripts !== undefined ? { scripts: command.scripts } : {}),
           updatedAt: occurredAt,
         },
@@ -144,6 +150,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      const project = readModel.projects.find((entry) => entry.id === command.projectId)!;
       return {
         ...withEventBase({
           aggregateKind: "thread",
@@ -155,6 +162,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          executionTarget: project.executionTarget,
           title: command.title,
           model: command.model,
           runtimeMode: command.runtimeMode,

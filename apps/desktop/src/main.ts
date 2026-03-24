@@ -11,14 +11,14 @@ import {
   ipcMain,
   Menu,
   nativeImage,
-  nativeTheme,
   protocol,
+  session,
   shell,
 } from "electron";
 import type { MenuItemConstructorOptions } from "electron";
 import * as Effect from "effect/Effect";
 import type {
-  DesktopTheme,
+  DesktopDeployRemoteWorkspaceInput,
   DesktopUpdateActionResult,
   DesktopUpdateState,
 } from "@t3tools/contracts";
@@ -43,12 +43,18 @@ import {
   reduceDesktopUpdateStateOnUpdateAvailable,
 } from "./updateMachine";
 import { isArm64HostRunningIntelBuild, resolveDesktopRuntimeInfo } from "./runtimeArch";
+import { createRemoteTlsTrustController } from "./remoteTlsTrust";
+import { createRemoteWorkspaceDeploymentController } from "./remoteWorkspaceDeployment";
+import {
+  readPersistedAppSettingsRaw,
+  writePersistedAppSettingsRaw,
+} from "./appSettingsPersistence";
+import { getAvailableLocalSshOpenEditors, openInLocalEditorViaSsh } from "./localEditorOpen";
 
 syncShellEnvironment();
 
 const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
 const CONFIRM_CHANNEL = "desktop:confirm";
-const SET_THEME_CHANNEL = "desktop:set-theme";
 const CONTEXT_MENU_CHANNEL = "desktop:context-menu";
 const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 const MENU_ACTION_CHANNEL = "desktop:menu-action";
@@ -56,8 +62,16 @@ const UPDATE_STATE_CHANNEL = "desktop:update-state";
 const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 const UPDATE_DOWNLOAD_CHANNEL = "desktop:update-download";
 const UPDATE_INSTALL_CHANNEL = "desktop:update-install";
-const BASE_DIR = process.env.T3CODE_HOME?.trim() || Path.join(OS.homedir(), ".t3");
-const STATE_DIR = Path.join(BASE_DIR, "userdata");
+const INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:inspect-remote-tls-certificate";
+const TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL = "desktop:trust-remote-tls-certificate";
+const DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL = "desktop:deploy-remote-workspace-server";
+const OPEN_IN_LOCAL_EDITOR_VIA_SSH_CHANNEL = "desktop:open-in-local-editor-via-ssh";
+const GET_LOCAL_SSH_OPEN_EDITORS_CHANNEL = "desktop:get-local-ssh-open-editors";
+const APP_SETTINGS_GET_CHANNEL = "desktop:app-settings-get";
+const APP_SETTINGS_SET_CHANNEL = "desktop:app-settings-set";
+const APP_SETTINGS_CHANGED_CHANNEL = "desktop:app-settings-changed";
+const STATE_DIR =
+  process.env.T3CODE_STATE_DIR?.trim() || Path.join(OS.homedir(), ".t3", "userdata");
 const DESKTOP_SCHEME = "t3";
 const ROOT_DIR = Path.resolve(__dirname, "../../..");
 const isDevelopment = Boolean(process.env.VITE_DEV_SERVER_URL);
@@ -75,13 +89,24 @@ const AUTO_UPDATE_STARTUP_DELAY_MS = 15_000;
 const AUTO_UPDATE_POLL_INTERVAL_MS = 4 * 60 * 60 * 1000;
 const DESKTOP_UPDATE_CHANNEL = "latest";
 const DESKTOP_UPDATE_ALLOW_PRERELEASE = false;
+const REMOTE_WORKSPACE_BINARY_ROOTS = [
+  Path.join(__dirname, "../resources/remote-workspace-binaries"),
+  Path.join(process.resourcesPath, "resources", "remote-workspace-binaries"),
+  Path.join(process.resourcesPath, "remote-workspace-binaries"),
+];
+const remoteTlsTrustController = createRemoteTlsTrustController(STATE_DIR);
+const remoteWorkspaceDeploymentController = createRemoteWorkspaceDeploymentController({
+  repoRoot: ROOT_DIR,
+  stateDir: STATE_DIR,
+  appVersion: app.getVersion(),
+  embeddedBinaryRoots: REMOTE_WORKSPACE_BINARY_ROOTS,
+});
 
 type DesktopUpdateErrorContext = DesktopUpdateState["errorContext"];
 
 let mainWindow: BrowserWindow | null = null;
 let backendProcess: ChildProcess.ChildProcess | null = null;
 let backendPort = 0;
-let backendAuthToken = "";
 let backendWsUrl = "";
 let restartAttempt = 0;
 let restartTimer: ReturnType<typeof setTimeout> | null = null;
@@ -91,6 +116,7 @@ let aboutCommitHashCache: string | null | undefined;
 let desktopLogSink: RotatingFileSink | null = null;
 let backendLogSink: RotatingFileSink | null = null;
 let restoreStdIoCapture: (() => void) | null = null;
+let persistedAppSettingsRaw: string | null | undefined;
 
 let destructiveMenuIconCache: Electron.NativeImage | null | undefined;
 const desktopRuntimeInfo = resolveDesktopRuntimeInfo({
@@ -150,14 +176,6 @@ function getSafeExternalUrl(rawUrl: unknown): string | null {
   }
 
   return parsedUrl.toString();
-}
-
-function getSafeTheme(rawTheme: unknown): DesktopTheme | null {
-  if (rawTheme === "light" || rawTheme === "dark" || rawTheme === "system") {
-    return rawTheme;
-  }
-
-  return null;
 }
 
 function writeDesktopStreamChunk(
@@ -535,28 +553,7 @@ function handleCheckForUpdatesMenuClick(): void {
   if (!BrowserWindow.getAllWindows().length) {
     mainWindow = createWindow();
   }
-  void checkForUpdatesFromMenu();
-}
-
-async function checkForUpdatesFromMenu(): Promise<void> {
-  await checkForUpdates("menu");
-
-  if (updateState.status === "up-to-date") {
-    void dialog.showMessageBox({
-      type: "info",
-      title: "You're up to date!",
-      message: `T3 Code ${updateState.currentVersion} is currently the newest version available.`,
-      buttons: ["OK"],
-    });
-  } else if (updateState.status === "error") {
-    void dialog.showMessageBox({
-      type: "warning",
-      title: "Update check failed",
-      message: "Could not check for updates.",
-      detail: updateState.message ?? "An unknown error occurred. Please try again later.",
-      buttons: ["OK"],
-    });
-  }
+  void checkForUpdates("menu");
 }
 
 function configureApplicationMenu(): void {
@@ -607,21 +604,7 @@ function configureApplicationMenu(): void {
       ],
     },
     { role: "editMenu" },
-    {
-      label: "View",
-      submenu: [
-        { role: "reload" },
-        { role: "forceReload" },
-        { role: "toggleDevTools" },
-        { type: "separator" },
-        { role: "resetZoom" },
-        { role: "zoomIn", accelerator: "CmdOrCtrl+=" },
-        { role: "zoomIn", accelerator: "CmdOrCtrl+Plus", visible: false },
-        { role: "zoomOut" },
-        { type: "separator" },
-        { role: "togglefullscreen" },
-      ],
-    },
+    { role: "viewMenu" },
     { role: "windowMenu" },
     {
       role: "help",
@@ -640,7 +623,6 @@ function configureApplicationMenu(): void {
 function resolveResourcePath(fileName: string): string | null {
   const candidates = [
     Path.join(__dirname, "../resources", fileName),
-    Path.join(__dirname, "../prod-resources", fileName),
     Path.join(process.resourcesPath, "resources", fileName),
     Path.join(process.resourcesPath, fileName),
   ];
@@ -705,6 +687,28 @@ function configureAppIdentity(): void {
       app.dock.setIcon(iconPath);
     }
   }
+}
+
+function loadPersistedAppSettingsRaw(): string | null {
+  if (persistedAppSettingsRaw !== undefined) {
+    return persistedAppSettingsRaw;
+  }
+  persistedAppSettingsRaw = readPersistedAppSettingsRaw(app.getPath("userData"));
+  return persistedAppSettingsRaw;
+}
+
+function broadcastPersistedAppSettings(raw: string | null): void {
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (window.isDestroyed()) {
+      continue;
+    }
+    window.webContents.send(APP_SETTINGS_CHANGED_CHANNEL, raw);
+  }
+}
+
+function persistAppSettingsRaw(raw: string | null): string | null {
+  persistedAppSettingsRaw = writePersistedAppSettingsRaw(app.getPath("userData"), raw);
+  return persistedAppSettingsRaw;
 }
 
 function clearUpdatePollTimer(): void {
@@ -924,8 +928,7 @@ function backendEnv(): NodeJS.ProcessEnv {
     T3CODE_MODE: "desktop",
     T3CODE_NO_BROWSER: "1",
     T3CODE_PORT: String(backendPort),
-    T3CODE_HOME: BASE_DIR,
-    T3CODE_AUTH_TOKEN: backendAuthToken,
+    T3CODE_STATE_DIR: STATE_DIR,
   };
 }
 
@@ -1072,6 +1075,20 @@ async function stopBackendAndWaitForExit(timeoutMs = 5_000): Promise<void> {
 }
 
 function registerIpcHandlers(): void {
+  ipcMain.removeAllListeners(APP_SETTINGS_GET_CHANNEL);
+  ipcMain.on(APP_SETTINGS_GET_CHANNEL, (event) => {
+    event.returnValue = loadPersistedAppSettingsRaw();
+  });
+
+  ipcMain.removeHandler(APP_SETTINGS_SET_CHANNEL);
+  ipcMain.handle(APP_SETTINGS_SET_CHANNEL, async (_event, raw: unknown) => {
+    if (typeof raw !== "string") {
+      throw new Error("Desktop app settings payload must be a string.");
+    }
+    const nextRaw = persistAppSettingsRaw(raw);
+    broadcastPersistedAppSettings(nextRaw);
+  });
+
   ipcMain.removeHandler(PICK_FOLDER_CHANNEL);
   ipcMain.handle(PICK_FOLDER_CHANNEL, async () => {
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
@@ -1094,16 +1111,6 @@ function registerIpcHandlers(): void {
 
     const owner = BrowserWindow.getFocusedWindow() ?? mainWindow;
     return showDesktopConfirmDialog(message, owner);
-  });
-
-  ipcMain.removeHandler(SET_THEME_CHANNEL);
-  ipcMain.handle(SET_THEME_CHANNEL, async (_event, rawTheme: unknown) => {
-    const theme = getSafeTheme(rawTheme);
-    if (!theme) {
-      return;
-    }
-
-    nativeTheme.themeSource = theme;
   });
 
   ipcMain.removeHandler(CONTEXT_MENU_CHANNEL);
@@ -1210,6 +1217,61 @@ function registerIpcHandlers(): void {
       completed: result.completed,
       state: updateState,
     } satisfies DesktopUpdateActionResult;
+  });
+
+  ipcMain.removeHandler(INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL);
+  ipcMain.handle(INSPECT_REMOTE_TLS_CERTIFICATE_CHANNEL, async (_event, url: unknown) => {
+    if (typeof url !== "string" || url.trim().length === 0) {
+      throw new Error("Enter a valid remote server URL.");
+    }
+    return remoteTlsTrustController.inspectRemoteTlsCertificate(url);
+  });
+
+  ipcMain.removeHandler(TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL);
+  ipcMain.handle(
+    TRUST_REMOTE_TLS_CERTIFICATE_CHANNEL,
+    async (_event, input: { url?: unknown; fingerprintSha256?: unknown }) => {
+      if (!input || typeof input !== "object") {
+        throw new Error("Certificate trust input is required.");
+      }
+      if (typeof input.url !== "string" || typeof input.fingerprintSha256 !== "string") {
+        throw new Error("Certificate trust input is invalid.");
+      }
+      await remoteTlsTrustController.trustRemoteTlsCertificate({
+        url: input.url,
+        fingerprintSha256: input.fingerprintSha256,
+      });
+    },
+  );
+
+  ipcMain.removeHandler(DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL);
+  ipcMain.handle(
+    DEPLOY_REMOTE_WORKSPACE_SERVER_CHANNEL,
+    async (_event, input: DesktopDeployRemoteWorkspaceInput) => {
+      return remoteWorkspaceDeploymentController.deploy(input);
+    },
+  );
+
+  ipcMain.removeHandler(OPEN_IN_LOCAL_EDITOR_VIA_SSH_CHANNEL);
+  ipcMain.handle(OPEN_IN_LOCAL_EDITOR_VIA_SSH_CHANNEL, async (_event, input: unknown) => {
+    if (!input || typeof input !== "object") {
+      throw new Error("Local SSH editor launch input is required.");
+    }
+    if (
+      typeof (input as { editor?: unknown }).editor !== "string" ||
+      typeof (input as { host?: unknown }).host !== "string" ||
+      typeof (input as { remotePath?: unknown }).remotePath !== "string" ||
+      ((input as { targetKind?: unknown }).targetKind !== "file" &&
+        (input as { targetKind?: unknown }).targetKind !== "directory")
+    ) {
+      throw new Error("Local SSH editor launch input is invalid.");
+    }
+    return openInLocalEditorViaSsh(input as Parameters<typeof openInLocalEditorViaSsh>[0]);
+  });
+
+  ipcMain.removeAllListeners(GET_LOCAL_SSH_OPEN_EDITORS_CHANNEL);
+  ipcMain.on(GET_LOCAL_SSH_OPEN_EDITORS_CHANNEL, (event) => {
+    event.returnValue = getAvailableLocalSshOpenEditors();
   });
 }
 
@@ -1319,8 +1381,7 @@ async function bootstrap(): Promise<void> {
     Effect.runPromise,
   );
   writeDesktopLogHeader(`reserved backend port via NetService port=${backendPort}`);
-  backendAuthToken = Crypto.randomBytes(24).toString("hex");
-  backendWsUrl = `ws://127.0.0.1:${backendPort}/?token=${encodeURIComponent(backendAuthToken)}`;
+  backendWsUrl = `ws://127.0.0.1:${backendPort}`;
   process.env.T3CODE_DESKTOP_WS_URL = backendWsUrl;
   writeDesktopLogHeader(`bootstrap resolved websocket url=${backendWsUrl}`);
 
@@ -1345,6 +1406,7 @@ app
   .then(() => {
     writeDesktopLogHeader("app ready");
     configureAppIdentity();
+    remoteTlsTrustController.installCertificateVerifyProc(session.defaultSession);
     configureApplicationMenu();
     registerDesktopProtocol();
     configureAutoUpdater();
