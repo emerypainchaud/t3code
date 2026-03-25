@@ -14,7 +14,7 @@ interface WsTransportOptions {
 interface PendingRequest {
   resolve: (result: unknown) => void;
   reject: (error: Error) => void;
-  timeout: ReturnType<typeof setTimeout>;
+  timeout: ReturnType<typeof setTimeout> | null;
 }
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -44,8 +44,11 @@ export class WsTransport {
   private readonly authToken: string | null;
   private connectionState: WsConnectionState = "connecting";
 
-  constructor(options?: string | WsTransportOptions) {
-    const resolvedOptions = typeof options === "string" ? { url: options } : (options ?? {});
+  constructor(options?: string | WsTransportOptions, authToken?: string | null) {
+    const resolvedOptions =
+      typeof options === "string"
+        ? { url: options, authToken }
+        : ((options ?? {}) as WsTransportOptions);
     const bridgeUrl = window.desktopBridge?.getWsUrl();
     // In dev mode, VITE_WS_URL points to the server's WebSocket endpoint.
     // In production, the page is served by the WS server on the same host:port.
@@ -61,7 +64,11 @@ export class WsTransport {
     this.connect();
   }
 
-  async request<T = unknown>(method: string, params?: unknown): Promise<T> {
+  async request<T = unknown>(
+    method: string,
+    params?: unknown,
+    options?: { timeoutMs?: number | null },
+  ): Promise<T> {
     if (typeof method !== "string" || method.length === 0) {
       throw new Error("Request method is required");
     }
@@ -70,10 +77,13 @@ export class WsTransport {
     const message: WsRequestEnvelope = { id, body };
 
     return new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Request timed out: ${method}`));
-      }, REQUEST_TIMEOUT_MS);
+      const timeout =
+        options?.timeoutMs === null
+          ? null
+          : setTimeout(() => {
+              this.pending.delete(id);
+              reject(new Error(`Request timed out: ${method}`));
+            }, options?.timeoutMs ?? REQUEST_TIMEOUT_MS);
 
       this.pending.set(id, {
         resolve: resolve as (result: unknown) => void,
@@ -116,7 +126,9 @@ export class WsTransport {
       this.reconnectTimer = null;
     }
     for (const pending of this.pending.values()) {
-      clearTimeout(pending.timeout);
+      if (pending.timeout !== null) {
+        clearTimeout(pending.timeout);
+      }
       pending.reject(new Error("Transport disposed"));
     }
     this.pending.clear();
@@ -142,6 +154,13 @@ export class WsTransport {
     });
 
     ws.addEventListener("close", () => {
+      for (const [requestId, pending] of this.pending) {
+        if (pending.timeout !== null) {
+          clearTimeout(pending.timeout);
+        }
+        pending.reject(new Error("WebSocket connection closed."));
+        this.pending.delete(requestId);
+      }
       this.ws = null;
       this.setConnectionState(this.disposed ? "disconnected" : "reconnecting");
       this.scheduleReconnect();
@@ -187,7 +206,9 @@ export class WsTransport {
     const pending = this.pending.get(message.id);
     if (!pending) return;
 
-    clearTimeout(pending.timeout);
+    if (pending.timeout !== null) {
+      clearTimeout(pending.timeout);
+    }
     this.pending.delete(message.id);
 
     if (message.error) {

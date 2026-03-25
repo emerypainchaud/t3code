@@ -394,6 +394,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           process: null,
           unsubscribeData: null,
           unsubscribeExit: null,
+          pendingHistoryControlSequence: "",
           hasRunningSubprocess: false,
           runtimeEnv: normalizedRuntimeEnv(input.env),
         };
@@ -514,6 +515,7 @@ export class TerminalManagerRuntime extends EventEmitter<TerminalManagerEvents> 
           process: null,
           unsubscribeData: null,
           unsubscribeExit: null,
+          pendingHistoryControlSequence: "",
           hasRunningSubprocess: false,
           runtimeEnv: normalizedRuntimeEnv(input.env),
         };

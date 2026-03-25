@@ -1,4 +1,5 @@
 import {
+  GitActionProgressEvent,
   OrchestrationEvent,
   ORCHESTRATION_WS_CHANNELS,
   ORCHESTRATION_WS_METHODS,
@@ -30,6 +31,7 @@ let settingsUnsubscribe: (() => void) | null = null;
 const welcomeListeners = new Set<(payload: WsWelcomePayload) => void>();
 const serverConfigUpdatedListeners = new Set<(payload: ServerConfigUpdatedPayload) => void>();
 const terminalEventListeners = new Set<(payload: TerminalEvent) => void>();
+const gitActionProgressListeners = new Set<(payload: GitActionProgressEvent) => void>();
 const domainEventListeners = new Set<(payload: OrchestrationEvent) => void>();
 
 let lastWelcome: WsWelcomePayload | null = null;
@@ -111,6 +113,19 @@ function attachTransportListeners(nextTransport: WsTransport, workspaceId: strin
         return;
       }
       for (const listener of terminalEventListeners) {
+        try {
+          listener(payload);
+        } catch {
+          // Swallow listener errors.
+        }
+      }
+    }),
+    nextTransport.subscribe(WS_CHANNELS.gitActionProgress, (data) => {
+      const payload = decodeAndWarnOnFailure(GitActionProgressEvent, data);
+      if (!payload) {
+        return;
+      }
+      for (const listener of gitActionProgressListeners) {
         try {
           listener(payload);
         } catch {
@@ -292,6 +307,12 @@ export function createWsNativeApi(): NativeApi {
       pull: (input) => ensureTransport().request(WS_METHODS.gitPull, input),
       status: (input) => ensureTransport().request(WS_METHODS.gitStatus, input),
       runStackedAction: (input) => ensureTransport().request(WS_METHODS.gitRunStackedAction, input),
+      onActionProgress: (callback) => {
+        gitActionProgressListeners.add(callback);
+        return () => {
+          gitActionProgressListeners.delete(callback);
+        };
+      },
       listBranches: (input) => ensureTransport().request(WS_METHODS.gitListBranches, input),
       createWorktree: (input) => ensureTransport().request(WS_METHODS.gitCreateWorktree, input),
       removeWorktree: (input) => ensureTransport().request(WS_METHODS.gitRemoveWorktree, input),

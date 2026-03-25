@@ -287,7 +287,7 @@ describe("ClaudeAdapterLive", () => {
       const adapter = yield* ClaudeAdapter;
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: "claudeCode",
         runtimeMode: "approval-required",
       });
 
@@ -1195,7 +1195,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: "claudeCode",
         runtimeMode: "full-access",
       });
 
@@ -1279,7 +1279,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: "claudeCode",
         runtimeMode: "full-access",
       });
 
@@ -1333,7 +1333,7 @@ describe("ClaudeAdapterLive", () => {
 
       yield* adapter.startSession({
         threadId: THREAD_ID,
-        provider: "claudeAgent",
+        provider: "claudeCode",
         runtimeMode: "full-access",
       });
 

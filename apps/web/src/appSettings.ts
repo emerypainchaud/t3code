@@ -9,6 +9,12 @@ export const MAX_CUSTOM_MODEL_LENGTH = 256;
 export const TIMESTAMP_FORMAT_OPTIONS = ["locale", "12-hour", "24-hour"] as const;
 export type TimestampFormat = (typeof TIMESTAMP_FORMAT_OPTIONS)[number];
 export const DEFAULT_TIMESTAMP_FORMAT: TimestampFormat = "locale";
+export const SIDEBAR_PROJECT_SORT_ORDER_OPTIONS = ["updated_at", "created_at", "manual"] as const;
+export type SidebarProjectSortOrder = (typeof SIDEBAR_PROJECT_SORT_ORDER_OPTIONS)[number];
+export const DEFAULT_SIDEBAR_PROJECT_SORT_ORDER: SidebarProjectSortOrder = "updated_at";
+export const SIDEBAR_THREAD_SORT_ORDER_OPTIONS = ["updated_at", "created_at"] as const;
+export type SidebarThreadSortOrder = (typeof SIDEBAR_THREAD_SORT_ORDER_OPTIONS)[number];
+export const DEFAULT_SIDEBAR_THREAD_SORT_ORDER: SidebarThreadSortOrder = "updated_at";
 export const LOCAL_WORKSPACE_ID = "local";
 const MAX_WORKSPACE_COUNT = 24;
 const MAX_WORKSPACE_FIELD_LENGTH = 4096;
@@ -31,6 +37,8 @@ export const APP_SERVICE_TIER_OPTIONS = [
 ] as const;
 export type AppServiceTier = (typeof APP_SERVICE_TIER_OPTIONS)[number]["value"];
 const AppServiceTierSchema = Schema.Literals(["auto", "fast", "flex"]);
+const SidebarProjectSortOrderSchema = Schema.Literals(SIDEBAR_PROJECT_SORT_ORDER_OPTIONS);
+const SidebarThreadSortOrderSchema = Schema.Literals(SIDEBAR_THREAD_SORT_ORDER_OPTIONS);
 const WorkspaceFieldSchema = Schema.String.check(Schema.isMaxLength(MAX_WORKSPACE_FIELD_LENGTH));
 const WorkspaceIdSchema = Schema.String.check(Schema.isMaxLength(128));
 const MODELS_WITH_FAST_SUPPORT = new Set(["gpt-5.4"]);
@@ -88,9 +96,21 @@ const AppSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(() => true),
     Schema.withConstructorDefault(() => Option.some(true)),
   ),
+  diffWordWrap: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(() => false),
+    Schema.withConstructorDefault(() => Option.some(false)),
+  ),
   enableAssistantStreaming: Schema.Boolean.pipe(
     Schema.withDecodingDefault(() => false),
     Schema.withConstructorDefault(() => Option.some(false)),
+  ),
+  sidebarProjectSortOrder: SidebarProjectSortOrderSchema.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_PROJECT_SORT_ORDER),
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_SIDEBAR_PROJECT_SORT_ORDER)),
+  ),
+  sidebarThreadSortOrder: SidebarThreadSortOrderSchema.pipe(
+    Schema.withDecodingDefault(() => DEFAULT_SIDEBAR_THREAD_SORT_ORDER),
+    Schema.withConstructorDefault(() => Option.some(DEFAULT_SIDEBAR_THREAD_SORT_ORDER)),
   ),
   timestampFormat: Schema.Literals(["locale", "12-hour", "24-hour"]).pipe(
     Schema.withDecodingDefault(() => DEFAULT_TIMESTAMP_FORMAT),

@@ -116,7 +116,7 @@ describe("resolveSelectableModel", () => {
 
   it("resolves provider-specific aliases after normalization", () => {
     expect(
-      resolveSelectableModel("claudeAgent", "sonnet", [
+      resolveSelectableModel("claudeCode", "sonnet", [
         { slug: "claude-opus-4-6", name: "Claude Opus 4.6" },
         { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
       ]),
@@ -152,7 +152,7 @@ describe("resolveSelectableModel", () => {
       resolveSelectableModel("codex", "sonnet", [{ slug: "gpt-5.3-codex", name: "GPT-5.3 Codex" }]),
     ).toBeNull();
     expect(
-      resolveSelectableModel("claudeAgent", "5.3", [
+      resolveSelectableModel("claudeCode", "5.3", [
         { slug: "claude-sonnet-4-6", name: "Claude Sonnet 4.6" },
       ]),
     ).toBeNull();

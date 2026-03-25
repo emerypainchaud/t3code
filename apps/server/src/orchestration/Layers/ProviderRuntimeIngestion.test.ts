@@ -2010,7 +2010,7 @@ describe("ProviderRuntimeIngestion", () => {
     harness.emit({
       type: "thread.token-usage.updated",
       eventId: asEventId("evt-thread-token-usage-updated-claude-window"),
-      provider: "claudeAgent",
+      provider: "claudeCode",
       createdAt: now,
       threadId: asThreadId("thread-1"),
       payload: {

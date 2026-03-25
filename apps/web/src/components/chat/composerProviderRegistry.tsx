@@ -66,29 +66,29 @@ const composerProviderRegistry: Record<ProviderKind, ProviderRegistryEntry> = {
     renderTraitsMenuContent: ({ threadId }) => <CodexTraitsMenuContent threadId={threadId} />,
     renderTraitsPicker: ({ threadId }) => <CodexTraitsPicker threadId={threadId} />,
   },
-  claudeAgent: {
+  claudeCode: {
     getState: ({ model, prompt, modelOptions }) => {
-      const reasoningOptions = getReasoningEffortOptions("claudeAgent", model);
+      const reasoningOptions = getReasoningEffortOptions("claudeCode", model);
       const draftEffort = resolveReasoningEffortForProvider(
-        "claudeAgent",
-        modelOptions?.claudeAgent?.effort,
+        "claudeCode",
+        modelOptions?.claudeCode?.effort,
       );
-      const defaultEffort = getDefaultReasoningEffort("claudeAgent");
+      const defaultEffort = getDefaultReasoningEffort("claudeCode");
       const promptEffort =
         draftEffort && draftEffort !== "ultrathink" && reasoningOptions.includes(draftEffort)
           ? draftEffort
           : reasoningOptions.includes(defaultEffort)
             ? defaultEffort
             : null;
-      const normalizedClaudeOptions = normalizeClaudeModelOptions(model, modelOptions?.claudeAgent);
+      const normalizedClaudeOptions = normalizeClaudeModelOptions(model, modelOptions?.claudeCode);
       const ultrathinkActive =
         supportsClaudeUltrathinkKeyword(model) && isClaudeUltrathinkPrompt(prompt);
 
       return {
-        provider: "claudeAgent",
+        provider: "claudeCode",
         promptEffort,
         modelOptionsForDispatch: normalizedClaudeOptions
-          ? { claudeAgent: normalizedClaudeOptions }
+          ? { claudeCode: normalizedClaudeOptions }
           : undefined,
         ...(ultrathinkActive ? { composerFrameClassName: "ultrathink-frame" } : {}),
         ...(ultrathinkActive

@@ -1579,7 +1579,7 @@ describe("ChatView timeline estimator parity (full app)", () => {
     useComposerDraftStore.setState({
       stickyModel: "claude-opus-4-6",
       stickyModelOptions: {
-        claudeAgent: {
+        claudeCode: {
           effort: "max",
           fastMode: true,
         },
@@ -1608,10 +1608,10 @@ describe("ChatView timeline estimator parity (full app)", () => {
       const newThreadId = newThreadPath.slice(1) as ThreadId;
 
       expect(useComposerDraftStore.getState().draftsByThreadId[newThreadId]).toMatchObject({
-        provider: "claudeAgent",
+        provider: "claudeCode",
         model: "claude-opus-4-6",
         modelOptions: {
-          claudeAgent: {
+          claudeCode: {
             effort: "max",
             fastMode: true,
           },

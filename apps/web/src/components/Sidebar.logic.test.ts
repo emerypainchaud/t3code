@@ -351,6 +351,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     expanded: true,
     createdAt: "2026-03-09T10:00:00.000Z",
     updatedAt: "2026-03-09T10:00:00.000Z",
+    executionTarget: { kind: "workspace-local" },
     scripts: [],
     ...overrides,
   };
@@ -361,6 +362,7 @@ function makeThread(overrides: Partial<Thread> = {}): Thread {
     id: ThreadId.makeUnsafe("thread-1"),
     codexThreadId: null,
     projectId: ProjectId.makeUnsafe("project-1"),
+    executionTarget: { kind: "workspace-local" },
     title: "Thread",
     model: "gpt-5.4",
     runtimeMode: DEFAULT_RUNTIME_MODE,

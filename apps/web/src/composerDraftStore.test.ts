@@ -646,7 +646,7 @@ describe("composerDraftStore modelOptions", () => {
       codex: {
         reasoningEffort: "xhigh",
       },
-      claudeAgent: {
+      claudeCode: {
         effort: "max",
         fastMode: true,
       },
@@ -654,7 +654,7 @@ describe("composerDraftStore modelOptions", () => {
 
     store.setProviderModelOptions(
       threadId,
-      "claudeAgent",
+      "claudeCode",
       {
         thinking: false,
       },
@@ -665,7 +665,7 @@ describe("composerDraftStore modelOptions", () => {
       codex: {
         reasoningEffort: "xhigh",
       },
-      claudeAgent: {
+      claudeCode: {
         thinking: false,
       },
     });
@@ -673,7 +673,7 @@ describe("composerDraftStore modelOptions", () => {
       codex: {
         reasoningEffort: "xhigh",
       },
-      claudeAgent: {
+      claudeCode: {
         thinking: false,
       },
     });
@@ -686,12 +686,12 @@ describe("composerDraftStore modelOptions", () => {
       codex: {
         reasoningEffort: "xhigh",
       },
-      claudeAgent: {
+      claudeCode: {
         effort: "max",
       },
     });
 
-    store.setProviderModelOptions(threadId, "claudeAgent", {
+    store.setProviderModelOptions(threadId, "claudeCode", {
       thinking: true,
     });
 
@@ -732,12 +732,12 @@ describe("composerDraftStore modelOptions", () => {
       codex: {
         fastMode: true,
       },
-      claudeAgent: {
+      claudeCode: {
         effort: "max",
       },
     });
 
-    store.setProviderModelOptions(threadId, "claudeAgent", {
+    store.setProviderModelOptions(threadId, "claudeCode", {
       thinking: false,
     });
 
@@ -745,7 +745,7 @@ describe("composerDraftStore modelOptions", () => {
       codex: {
         fastMode: true,
       },
-      claudeAgent: {
+      claudeCode: {
         thinking: false,
       },
     });
@@ -760,19 +760,19 @@ describe("composerDraftStore modelOptions", () => {
     const store = useComposerDraftStore.getState();
 
     store.setStickyModelOptions({
-      claudeAgent: {
+      claudeCode: {
         effort: "max",
       },
     });
     store.setModelOptions(threadId, {
-      claudeAgent: {
+      claudeCode: {
         effort: "max",
       },
     });
 
     store.setProviderModelOptions(
       threadId,
-      "claudeAgent",
+      "claudeCode",
       {
         thinking: false,
       },
@@ -780,12 +780,12 @@ describe("composerDraftStore modelOptions", () => {
     );
 
     expect(useComposerDraftStore.getState().draftsByThreadId[threadId]?.modelOptions).toEqual({
-      claudeAgent: {
+      claudeCode: {
         thinking: false,
       },
     });
     expect(useComposerDraftStore.getState().stickyModelOptions).toEqual({
-      claudeAgent: {
+      claudeCode: {
         effort: "max",
       },
     });

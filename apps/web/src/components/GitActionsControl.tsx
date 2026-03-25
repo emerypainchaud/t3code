@@ -360,6 +360,9 @@ export default function GitActionsControl({
       };
 
       const promise = runImmediateGitActionMutation.mutateAsync({
+        actionId:
+          globalThis.crypto?.randomUUID?.() ??
+          `git-action-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
         action,
         ...(commitMessage ? { commitMessage } : {}),
         ...(featureBranch ? { featureBranch } : {}),

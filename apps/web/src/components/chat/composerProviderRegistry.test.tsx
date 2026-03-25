@@ -44,14 +44,14 @@ describe("getComposerProviderState", () => {
 
   it("returns Claude defaults for effort-capable models", () => {
     const state = getComposerProviderState({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       model: "claude-sonnet-4-6",
       prompt: "",
       modelOptions: undefined,
     });
 
     expect(state).toEqual({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       promptEffort: "high",
       modelOptionsForDispatch: undefined,
     });
@@ -59,21 +59,21 @@ describe("getComposerProviderState", () => {
 
   it("tracks Claude ultrathink from the prompt without changing dispatch effort", () => {
     const state = getComposerProviderState({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       model: "claude-sonnet-4-6",
       prompt: "Ultrathink:\nInvestigate this failure",
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           effort: "medium",
         },
       },
     });
 
     expect(state).toEqual({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       promptEffort: "medium",
       modelOptionsForDispatch: {
-        claudeAgent: {
+        claudeCode: {
           effort: "medium",
         },
       },
@@ -85,11 +85,11 @@ describe("getComposerProviderState", () => {
 
   it("drops unsupported Claude effort options for models without effort controls", () => {
     const state = getComposerProviderState({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       model: "claude-haiku-4-5",
       prompt: "",
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           effort: "max",
           thinking: false,
         },
@@ -97,10 +97,10 @@ describe("getComposerProviderState", () => {
     });
 
     expect(state).toEqual({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       promptEffort: null,
       modelOptionsForDispatch: {
-        claudeAgent: {
+        claudeCode: {
           thinking: false,
         },
       },
@@ -109,7 +109,7 @@ describe("getComposerProviderState", () => {
 
   it("ignores codex options while resolving Claude state", () => {
     const state = getComposerProviderState({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       model: "claude-opus-4-6",
       prompt: "",
       modelOptions: {
@@ -121,7 +121,7 @@ describe("getComposerProviderState", () => {
     });
 
     expect(state).toEqual({
-      provider: "claudeAgent",
+      provider: "claudeCode",
       promptEffort: "high",
       modelOptionsForDispatch: undefined,
     });
@@ -133,7 +133,7 @@ describe("getComposerProviderState", () => {
       model: "gpt-5.4",
       prompt: "Ultrathink:\nThis should not matter",
       modelOptions: {
-        claudeAgent: {
+        claudeCode: {
           effort: "max",
           fastMode: true,
         },

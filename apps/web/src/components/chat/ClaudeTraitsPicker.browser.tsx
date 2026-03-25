@@ -186,7 +186,7 @@ describe("ClaudeTraitsPicker", () => {
       await page.getByRole("menuitemradio", { name: "Max" }).click();
 
       expect(useComposerDraftStore.getState().stickyModelOptions).toMatchObject({
-        claudeAgent: {
+        claudeCode: {
           effort: "max",
         },
       });

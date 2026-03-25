@@ -144,7 +144,7 @@ describe("ProviderRuntimeEvent", () => {
     const parsed = decodeRuntimeEvent({
       type: "thread.token-usage.updated",
       eventId: "event-token-usage-1",
-      provider: "claudeAgent",
+      provider: "claudeCode",
       createdAt: "2026-02-28T00:00:04.000Z",
       threadId: "thread-1",
       payload: {
