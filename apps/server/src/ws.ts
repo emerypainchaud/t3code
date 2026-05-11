@@ -79,6 +79,13 @@ import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import {
+  createLocalDirectory,
+  createSshDirectory,
+  listLocalDirectories,
+  listSshDirectories,
+  preflightSshTarget,
+} from "./projectSsh.ts";
+import {
   BootstrapCredentialService,
   type BootstrapCredentialChange,
 } from "./auth/Services/BootstrapCredentialService.ts";
@@ -950,6 +957,38 @@ const makeWsRpcLayer = (currentSessionId: AuthSessionId) =>
                     cause,
                   }),
               ),
+            ),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsListDirectory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsListDirectory,
+            Effect.tryPromise(() => listLocalDirectories(input)),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsCreateDirectory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsCreateDirectory,
+            Effect.tryPromise(() => createLocalDirectory(input)),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsSshListDirectory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsSshListDirectory,
+            Effect.tryPromise(() => listSshDirectories(input)),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsSshCreateDirectory]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsSshCreateDirectory,
+            Effect.tryPromise(() => createSshDirectory(input)),
+            { "rpc.aggregate": "workspace" },
+          ),
+        [WS_METHODS.projectsSshPreflight]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectsSshPreflight,
+            ServerConfig.use((config) =>
+              Effect.promise(() => preflightSshTarget(config.stateDir, input)),
             ),
             { "rpc.aggregate": "workspace" },
           ),

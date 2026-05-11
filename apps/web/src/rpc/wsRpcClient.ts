@@ -67,6 +67,11 @@ export interface WsRpcClient {
   };
   readonly projects: {
     readonly searchEntries: RpcUnaryMethod<typeof WS_METHODS.projectsSearchEntries>;
+    readonly listDirectory: RpcUnaryMethod<typeof WS_METHODS.projectsListDirectory>;
+    readonly createDirectory: RpcUnaryMethod<typeof WS_METHODS.projectsCreateDirectory>;
+    readonly sshListDirectory: RpcUnaryMethod<typeof WS_METHODS.projectsSshListDirectory>;
+    readonly sshCreateDirectory: RpcUnaryMethod<typeof WS_METHODS.projectsSshCreateDirectory>;
+    readonly sshPreflight: RpcUnaryMethod<typeof WS_METHODS.projectsSshPreflight>;
     readonly writeFile: RpcUnaryMethod<typeof WS_METHODS.projectsWriteFile>;
   };
   readonly filesystem: {
@@ -174,6 +179,16 @@ export function createWsRpcClient(transport: WsTransport): WsRpcClient {
     projects: {
       searchEntries: (input) =>
         transport.request((client) => client[WS_METHODS.projectsSearchEntries](input)),
+      listDirectory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectsListDirectory](input)),
+      createDirectory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectsCreateDirectory](input)),
+      sshListDirectory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectsSshListDirectory](input)),
+      sshCreateDirectory: (input) =>
+        transport.request((client) => client[WS_METHODS.projectsSshCreateDirectory](input)),
+      sshPreflight: (input) =>
+        transport.request((client) => client[WS_METHODS.projectsSshPreflight](input)),
       writeFile: (input) =>
         transport.request((client) => client[WS_METHODS.projectsWriteFile](input)),
     },

@@ -20,8 +20,15 @@ import type {
 } from "./git.ts";
 import type { FilesystemBrowseInput, FilesystemBrowseResult } from "./filesystem.ts";
 import type {
+  ProjectCreateDirectoryInput,
+  ProjectListDirectoryInput,
+  ProjectListDirectoryResult,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ProjectSshCreateDirectoryInput,
+  ProjectSshDirectoryListInput,
+  ProjectSshPreflightInput,
+  ProjectSshPreflightResult,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
@@ -500,6 +507,13 @@ export interface EnvironmentApi {
   };
   projects: {
     searchEntries: (input: ProjectSearchEntriesInput) => Promise<ProjectSearchEntriesResult>;
+    listDirectory: (input: ProjectListDirectoryInput) => Promise<ProjectListDirectoryResult>;
+    createDirectory: (input: ProjectCreateDirectoryInput) => Promise<ProjectListDirectoryResult>;
+    sshListDirectory: (input: ProjectSshDirectoryListInput) => Promise<ProjectListDirectoryResult>;
+    sshCreateDirectory: (
+      input: ProjectSshCreateDirectoryInput,
+    ) => Promise<ProjectListDirectoryResult>;
+    sshPreflight: (input: ProjectSshPreflightInput) => Promise<ProjectSshPreflightResult>;
     writeFile: (input: ProjectWriteFileInput) => Promise<ProjectWriteFileResult>;
   };
   filesystem: {

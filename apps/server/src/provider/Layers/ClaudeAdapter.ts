@@ -67,6 +67,7 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { resolveRemoteProviderCwd } from "../../remoteExecution.ts";
 import { makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
 import {
   getClaudeModelCapabilities,
@@ -2870,6 +2871,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const extraArgs = parseCliArgs(claudeSettings.launchArgs).flags;
       const modelSelection =
         input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
+      const providerOptions = input.providerOptions?.claudeAgent;
       const caps = getClaudeModelCapabilities(modelSelection?.model);
       const descriptors = getProviderOptionDescriptors({ caps });
       const apiModelId = modelSelection ? resolveClaudeApiModelId(modelSelection) : undefined;
@@ -2892,15 +2894,23 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         "auto-accept-edits": "acceptEdits",
         "full-access": "bypassPermissions",
       };
-      const permissionMode = runtimeModeToPermission[input.runtimeMode];
+      const permissionMode =
+        providerOptions?.permissionMode ?? runtimeModeToPermission[input.runtimeMode];
+      const shellEnvironment = providerOptions?.shellEnvironment ?? undefined;
+      const queryEnvironment = {
+        ...claudeEnvironment,
+        ...shellEnvironment,
+        ...(providerOptions?.shellPath ? { SHELL: providerOptions.shellPath } : {}),
+      };
+      const providerCwd = resolveRemoteProviderCwd(input.cwd, shellEnvironment);
       const settings = {
         ...(typeof thinking === "boolean" ? { alwaysThinkingEnabled: thinking } : {}),
         ...(fastMode ? { fastMode: true } : {}),
       };
       const queryOptions: ClaudeQueryOptions = {
-        ...(input.cwd ? { cwd: input.cwd } : {}),
+        ...(providerCwd ? { cwd: providerCwd } : {}),
         ...(apiModelId ? { model: apiModelId } : {}),
-        pathToClaudeCodeExecutable: claudeBinaryPath,
+        pathToClaudeCodeExecutable: providerOptions?.binaryPath ?? claudeBinaryPath,
         systemPrompt: { type: "preset", preset: "claude_code" },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // The SDK type lags the CLI here: Opus 4.7 accepts `xhigh` even though
@@ -2914,13 +2924,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         ...(permissionMode === "bypassPermissions"
           ? { allowDangerouslySkipPermissions: true }
           : {}),
+        ...(providerOptions?.maxThinkingTokens !== undefined
+          ? { maxThinkingTokens: providerOptions.maxThinkingTokens }
+          : {}),
         ...(Object.keys(settings).length > 0 ? { settings } : {}),
         ...(existingResumeSessionId ? { resume: existingResumeSessionId } : {}),
         ...(newSessionId ? { sessionId: newSessionId } : {}),
         includePartialMessages: true,
         canUseTool,
-        env: claudeEnvironment,
-        ...(input.cwd ? { additionalDirectories: [input.cwd] } : {}),
+        env: queryEnvironment,
+        ...(providerCwd ? { additionalDirectories: [providerCwd] } : {}),
         ...(Object.keys(extraArgs).length > 0 ? { extraArgs } : {}),
       };
 

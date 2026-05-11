@@ -50,9 +50,16 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 import {
+  ProjectCreateDirectoryInput,
+  ProjectListDirectoryInput,
+  ProjectListDirectoryResult,
   ProjectSearchEntriesError,
   ProjectSearchEntriesInput,
   ProjectSearchEntriesResult,
+  ProjectSshCreateDirectoryInput,
+  ProjectSshDirectoryListInput,
+  ProjectSshPreflightInput,
+  ProjectSshPreflightResult,
   ProjectWriteFileError,
   ProjectWriteFileInput,
   ProjectWriteFileResult,
@@ -103,6 +110,11 @@ export const WS_METHODS = {
   projectsAdd: "projects.add",
   projectsRemove: "projects.remove",
   projectsSearchEntries: "projects.searchEntries",
+  projectsListDirectory: "projects.listDirectory",
+  projectsCreateDirectory: "projects.createDirectory",
+  projectsSshListDirectory: "projects.sshListDirectory",
+  projectsSshCreateDirectory: "projects.sshCreateDirectory",
+  projectsSshPreflight: "projects.sshPreflight",
   projectsWriteFile: "projects.writeFile",
 
   // Shell methods
@@ -257,6 +269,31 @@ export const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntr
   payload: ProjectSearchEntriesInput,
   success: ProjectSearchEntriesResult,
   error: ProjectSearchEntriesError,
+});
+
+export const WsProjectsListDirectoryRpc = Rpc.make(WS_METHODS.projectsListDirectory, {
+  payload: ProjectListDirectoryInput,
+  success: ProjectListDirectoryResult,
+});
+
+export const WsProjectsCreateDirectoryRpc = Rpc.make(WS_METHODS.projectsCreateDirectory, {
+  payload: ProjectCreateDirectoryInput,
+  success: ProjectListDirectoryResult,
+});
+
+export const WsProjectsSshListDirectoryRpc = Rpc.make(WS_METHODS.projectsSshListDirectory, {
+  payload: ProjectSshDirectoryListInput,
+  success: ProjectListDirectoryResult,
+});
+
+export const WsProjectsSshCreateDirectoryRpc = Rpc.make(WS_METHODS.projectsSshCreateDirectory, {
+  payload: ProjectSshCreateDirectoryInput,
+  success: ProjectListDirectoryResult,
+});
+
+export const WsProjectsSshPreflightRpc = Rpc.make(WS_METHODS.projectsSshPreflight, {
+  payload: ProjectSshPreflightInput,
+  success: ProjectSshPreflightResult,
 });
 
 export const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
@@ -477,6 +514,11 @@ export const WsRpcGroup = RpcGroup.make(
   WsSourceControlCloneRepositoryRpc,
   WsSourceControlPublishRepositoryRpc,
   WsProjectsSearchEntriesRpc,
+  WsProjectsListDirectoryRpc,
+  WsProjectsCreateDirectoryRpc,
+  WsProjectsSshListDirectoryRpc,
+  WsProjectsSshCreateDirectoryRpc,
+  WsProjectsSshPreflightRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,

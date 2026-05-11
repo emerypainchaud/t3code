@@ -18,6 +18,11 @@ export function createEnvironmentApi(rpcClient: WsRpcClient): EnvironmentApi {
     },
     projects: {
       searchEntries: rpcClient.projects.searchEntries,
+      listDirectory: rpcClient.projects.listDirectory,
+      createDirectory: rpcClient.projects.createDirectory,
+      sshListDirectory: rpcClient.projects.sshListDirectory,
+      sshCreateDirectory: rpcClient.projects.sshCreateDirectory,
+      sshPreflight: rpcClient.projects.sshPreflight,
       writeFile: rpcClient.projects.writeFile,
     },
     filesystem: {

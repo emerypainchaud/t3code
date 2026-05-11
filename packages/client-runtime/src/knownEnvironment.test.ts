@@ -61,9 +61,11 @@ describe("known environment bootstrap helpers", () => {
 });
 
 describe("scoped refs", () => {
-  const environmentId = EnvironmentId.make("environment-test");
-  const projectRef = scopeProjectRef(environmentId, ProjectId.make("project-1"));
-  const threadRef = scopeThreadRef(environmentId, ThreadId.make("thread-1"));
+  const environmentId = "environment-test" as EnvironmentId;
+  const projectId = "project-1" as ProjectId;
+  const threadId = "thread-1" as ThreadId;
+  const projectRef = scopeProjectRef(environmentId, projectId);
+  const threadRef = scopeThreadRef(environmentId, threadId);
 
   it("builds stable scoped project and thread keys", () => {
     expect(scopedRefKey(projectRef)).toBe("environment-test:project-1");
@@ -75,11 +77,11 @@ describe("scoped refs", () => {
   it("returns typed scoped refs", () => {
     expect(projectRef).toEqual({
       environmentId,
-      projectId: ProjectId.make("project-1"),
+      projectId,
     });
     expect(threadRef).toEqual({
       environmentId,
-      threadId: ThreadId.make("thread-1"),
+      threadId,
     });
   });
 

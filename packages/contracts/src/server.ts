@@ -58,6 +58,16 @@ export const ServerProviderAuth = Schema.Struct({
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
+export const ServerProviderStatus = Schema.Struct({
+  provider: ProviderDriverKind,
+  status: Schema.Literals(["ready", "warning", "error"]),
+  available: Schema.Boolean,
+  authStatus: ServerProviderAuthStatus,
+  checkedAt: IsoDateTime,
+  message: Schema.optional(TrimmedNonEmptyString),
+});
+export type ServerProviderStatus = typeof ServerProviderStatus.Type;
+
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,

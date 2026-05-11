@@ -52,6 +52,7 @@ import {
 import { type CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { resolveRemoteProviderCwd } from "../../remoteExecution.ts";
 import {
   CodexResumeCursorSchema,
   CodexSessionRuntimeThreadIdMissingError,
@@ -1378,13 +1379,26 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           yield* Effect.suspend(() => stopSessionInternal(existing));
         }
 
+        const providerOptions = input.providerOptions?.codex;
+        const shellEnvironment = providerOptions?.shellEnvironment ?? undefined;
+        const runtimeEnvironment = {
+          ...(options?.environment ?? process.env),
+          ...shellEnvironment,
+          ...(providerOptions?.shellPath ? { SHELL: providerOptions.shellPath } : {}),
+        };
+        const runtimeCwd =
+          resolveRemoteProviderCwd(input.cwd ?? process.cwd(), shellEnvironment) ??
+          input.cwd ??
+          process.cwd();
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,
-          cwd: input.cwd ?? process.cwd(),
-          binaryPath: codexConfig.binaryPath,
-          ...(options?.environment ? { environment: options.environment } : {}),
-          ...(codexConfig.homePath ? { homePath: codexConfig.homePath } : {}),
+          cwd: runtimeCwd,
+          binaryPath: providerOptions?.binaryPath ?? codexConfig.binaryPath,
+          environment: runtimeEnvironment,
+          ...((providerOptions?.homePath ?? codexConfig.homePath)
+            ? { homePath: providerOptions?.homePath ?? codexConfig.homePath }
+            : {}),
           ...(isCodexResumeCursorSchema(input.resumeCursor)
             ? { resumeCursor: input.resumeCursor }
             : {}),

@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type OrchestrationEvent,
   ProviderDriverKind,
+  type ProjectExecutionTarget,
   type ProjectId,
   type OrchestrationSession,
   ThreadId,
@@ -30,6 +31,10 @@ import { ProviderAdapterRequestError } from "../../provider/Errors.ts";
 import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import {
+  RemoteExecutionManager,
+  type RemoteExecutionLaunchConfig,
+} from "../../remoteExecutionManager.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
 import {
@@ -88,6 +93,20 @@ const HANDLED_TURN_START_KEY_MAX = 10_000;
 const HANDLED_TURN_START_KEY_TTL = Duration.minutes(30);
 const DEFAULT_RUNTIME_MODE: RuntimeMode = "full-access";
 const DEFAULT_THREAD_TITLE = "New thread";
+const DEFAULT_EXECUTION_TARGET = {
+  kind: "workspace-local",
+} as const satisfies ProjectExecutionTarget;
+
+const serializeLaunchSignature = (input: {
+  readonly cwd: string | undefined;
+  readonly providerOptions: RemoteExecutionLaunchConfig["providerOptions"];
+  readonly executionTarget: ProjectExecutionTarget;
+}): string =>
+  JSON.stringify({
+    cwd: input.cwd ?? null,
+    providerOptions: input.providerOptions ?? null,
+    executionTarget: input.executionTarget,
+  });
 
 export function providerErrorLabel(value: string | undefined): string {
   const normalized = value?.trim();
@@ -183,6 +202,7 @@ const make = Effect.gen(function* () {
   const providerService = yield* ProviderService;
   const gitWorkflow = yield* GitWorkflowService;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
+  const remoteExecutionManager = yield* RemoteExecutionManager;
   const textGeneration = yield* TextGeneration;
   const serverSettingsService = yield* ServerSettingsService;
   const handledTurnStartKeys = yield* Cache.make<string, true>({
@@ -199,6 +219,11 @@ const make = Effect.gen(function* () {
     );
 
   const threadModelSelections = new Map<string, ModelSelection>();
+  const threadExecutionTargets = new Map<string, ProjectExecutionTarget>();
+  const threadLaunchSignatures = new Map<string, string>();
+
+  const toExecutionTarget = (target?: ProjectExecutionTarget): ProjectExecutionTarget =>
+    target ?? DEFAULT_EXECUTION_TARGET;
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -297,6 +322,7 @@ const make = Effect.gen(function* () {
     createdAt: string,
     options?: {
       readonly modelSelection?: ModelSelection;
+      readonly executionTarget?: ProjectExecutionTarget;
     },
   ) {
     const thread = yield* resolveThread(threadId);
@@ -395,9 +421,23 @@ const make = Effect.gen(function* () {
       }
     }
     const project = yield* resolveProject(thread.projectId);
-    const effectiveCwd = resolveThreadWorkspaceCwd({
+    const threadWorkspaceCwd = resolveThreadWorkspaceCwd({
       thread,
       projects: project ? [project] : [],
+    });
+    const desiredExecutionTarget = toExecutionTarget(
+      options?.executionTarget ?? threadExecutionTargets.get(threadId),
+    );
+    const launchConfig = yield* remoteExecutionManager.prepareLaunch({
+      cwd: threadWorkspaceCwd ?? undefined,
+      target: desiredExecutionTarget,
+      provider: preferredProvider,
+    });
+    const effectiveCwd = launchConfig.cwd ?? threadWorkspaceCwd;
+    const desiredLaunchSignature = serializeLaunchSignature({
+      cwd: effectiveCwd ?? undefined,
+      providerOptions: launchConfig.providerOptions,
+      executionTarget: desiredExecutionTarget,
     });
 
     const startProviderSession = (input?: {
@@ -411,6 +451,9 @@ const make = Effect.gen(function* () {
         ...(effectiveCwd ? { cwd: effectiveCwd } : {}),
         modelSelection: desiredModelSelection,
         ...(input?.resumeCursor !== undefined ? { resumeCursor: input.resumeCursor } : {}),
+        ...(launchConfig.providerOptions !== undefined
+          ? { providerOptions: launchConfig.providerOptions }
+          : {}),
         runtimeMode: desiredRuntimeMode,
       });
 
@@ -459,14 +502,25 @@ const make = Effect.gen(function* () {
         preferredProvider === "claudeAgent" &&
         requestedModelSelection !== undefined &&
         !Equal.equals(previousModelSelection, requestedModelSelection);
+      const previousExecutionTarget = toExecutionTarget(threadExecutionTargets.get(threadId));
+      const executionTargetChanged = !Equal.equals(previousExecutionTarget, desiredExecutionTarget);
+      const previousLaunchSignature = threadLaunchSignatures.get(threadId);
+      const launchSignatureChanged =
+        previousLaunchSignature !== undefined
+          ? previousLaunchSignature !== desiredLaunchSignature
+          : activeSession?.cwd !== effectiveCwd;
 
       if (
         !runtimeModeChanged &&
         !cwdChanged &&
         !instanceChanged &&
         !shouldRestartForModelChange &&
-        !shouldRestartForModelSelectionChange
+        !shouldRestartForModelSelectionChange &&
+        !executionTargetChanged &&
+        !launchSignatureChanged
       ) {
+        threadExecutionTargets.set(threadId, desiredExecutionTarget);
+        threadLaunchSignatures.set(threadId, desiredLaunchSignature);
         return existingSessionThreadId;
       }
 
@@ -490,6 +544,8 @@ const make = Effect.gen(function* () {
         instanceChanged,
         shouldRestartForModelChange,
         shouldRestartForModelSelectionChange,
+        executionTargetChanged,
+        launchSignatureChanged,
         hasResumeCursor: resumeCursor !== undefined,
       });
       const restartedSession = yield* startProviderSession(
@@ -503,11 +559,15 @@ const make = Effect.gen(function* () {
         runtimeMode: restartedSession.runtimeMode,
         cwd: restartedSession.cwd,
       });
+      threadExecutionTargets.set(threadId, desiredExecutionTarget);
+      threadLaunchSignatures.set(threadId, desiredLaunchSignature);
       yield* bindSessionToThread(restartedSession);
       return restartedSession.threadId;
     }
 
     const startedSession = yield* startProviderSession(undefined);
+    threadExecutionTargets.set(threadId, desiredExecutionTarget);
+    threadLaunchSignatures.set(threadId, desiredLaunchSignature);
     yield* bindSessionToThread(startedSession);
     return startedSession.threadId;
   });
@@ -517,6 +577,7 @@ const make = Effect.gen(function* () {
     readonly messageText: string;
     readonly attachments?: ReadonlyArray<ChatAttachment>;
     readonly modelSelection?: ModelSelection;
+    readonly executionTarget?: ProjectExecutionTarget;
     readonly interactionMode?: "default" | "plan";
     readonly createdAt: string;
   }) {
@@ -526,11 +587,10 @@ const make = Effect.gen(function* () {
         new Error(`Thread '${input.threadId}' was not found in read model.`),
       );
     }
-    yield* ensureSessionForThread(
-      input.threadId,
-      input.createdAt,
-      input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {},
-    );
+    yield* ensureSessionForThread(input.threadId, input.createdAt, {
+      ...(input.modelSelection !== undefined ? { modelSelection: input.modelSelection } : {}),
+      ...(input.executionTarget !== undefined ? { executionTarget: input.executionTarget } : {}),
+    });
     if (input.modelSelection !== undefined) {
       threadModelSelections.set(input.threadId, input.modelSelection);
     }
@@ -701,13 +761,13 @@ const make = Effect.gen(function* () {
 
     const isFirstUserMessageTurn =
       thread.messages.filter((entry) => entry.role === "user").length === 1;
+    const project = yield* resolveProject(thread.projectId);
+    const threadWorkspaceCwd =
+      resolveThreadWorkspaceCwd({
+        thread,
+        projects: project ? [project] : [],
+      }) ?? process.cwd();
     if (isFirstUserMessageTurn) {
-      const project = yield* resolveProject(thread.projectId);
-      const generationCwd =
-        resolveThreadWorkspaceCwd({
-          thread,
-          projects: project ? [project] : [],
-        }) ?? process.cwd();
       const generationInput = {
         messageText: message.text,
         ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
@@ -724,7 +784,7 @@ const make = Effect.gen(function* () {
       if (canReplaceThreadTitle(thread.title, event.payload.titleSeed)) {
         yield* maybeGenerateThreadTitleForFirstTurn({
           threadId: event.payload.threadId,
-          cwd: generationCwd,
+          cwd: threadWorkspaceCwd,
           ...generationInput,
         }).pipe(Effect.forkScoped);
       }
@@ -772,6 +832,9 @@ const make = Effect.gen(function* () {
       ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
       ...(event.payload.modelSelection !== undefined
         ? { modelSelection: event.payload.modelSelection }
+        : {}),
+      ...(event.payload.executionTarget !== undefined
+        ? { executionTarget: event.payload.executionTarget }
         : {}),
       interactionMode: event.payload.interactionMode,
       createdAt: event.payload.createdAt,

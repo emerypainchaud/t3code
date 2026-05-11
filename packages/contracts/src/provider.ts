@@ -4,6 +4,7 @@ import {
   ApprovalRequestId,
   EventId,
   IsoDateTime,
+  PositiveInt,
   ProviderItemId,
   ThreadId,
   TurnId,
@@ -30,6 +31,39 @@ const ProviderSessionStatus = Schema.Literals([
   "error",
   "closed",
 ]);
+
+const ProviderShellEnvironment = Schema.Record(Schema.String, Schema.String);
+
+export const ClaudeAgentPermissionMode = Schema.Literals([
+  "default",
+  "acceptEdits",
+  "bypassPermissions",
+  "plan",
+]);
+export type ClaudeAgentPermissionMode = typeof ClaudeAgentPermissionMode.Type;
+
+export const CodexProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+  homePath: Schema.optional(TrimmedNonEmptyString),
+  shellPath: Schema.optional(TrimmedNonEmptyString),
+  shellEnvironment: Schema.optional(ProviderShellEnvironment),
+});
+export type CodexProviderStartOptions = typeof CodexProviderStartOptions.Type;
+
+export const ClaudeAgentProviderStartOptions = Schema.Struct({
+  binaryPath: Schema.optional(TrimmedNonEmptyString),
+  permissionMode: Schema.optional(ClaudeAgentPermissionMode),
+  maxThinkingTokens: Schema.optional(PositiveInt),
+  shellPath: Schema.optional(TrimmedNonEmptyString),
+  shellEnvironment: Schema.optional(ProviderShellEnvironment),
+});
+export type ClaudeAgentProviderStartOptions = typeof ClaudeAgentProviderStartOptions.Type;
+
+export const ProviderStartOptions = Schema.Struct({
+  codex: Schema.optional(CodexProviderStartOptions),
+  claudeAgent: Schema.optional(ClaudeAgentProviderStartOptions),
+});
+export type ProviderStartOptions = typeof ProviderStartOptions.Type;
 
 export const ProviderSession = Schema.Struct({
   provider: ProviderDriverKind,
@@ -60,6 +94,7 @@ export const ProviderSessionStartInput = Schema.Struct({
   resumeCursor: Schema.optional(Schema.Unknown),
   approvalPolicy: Schema.optional(ProviderApprovalPolicy),
   sandboxMode: Schema.optional(ProviderSandboxMode),
+  providerOptions: Schema.optional(ProviderStartOptions),
   runtimeMode: RuntimeMode,
 });
 export type ProviderSessionStartInput = typeof ProviderSessionStartInput.Type;
